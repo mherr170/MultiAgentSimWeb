@@ -1,0 +1,23 @@
+## .NET / ASP.NET Core
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+## Logs
+logs/
+*.log
+
+## Rider / VS / VSCode
+.idea/
+.vscode/
+*.DotSettings
+
+## NuGet
+*.nupkg
+packages/
+
+## OS
+Thumbs.db
+.DS_Store

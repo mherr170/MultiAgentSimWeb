@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Multi-Agent Simulation</title>
+    <base href="/" />
+    <link rel="stylesheet" href="app.css" />
+    <HeadOutlet />
+</head>
+<body>
+    <Routes />
+    <script>
+        window.scrollToBottom = (el) => { if (el) el.scrollTop = el.scrollHeight; };
+        window.scrollToTop    = (el) => { if (el) el.scrollTop = 0; };
+        window.scrollToRight  = (el) => { if (el) el.scrollLeft = el.scrollWidth; };
+    </script>
+    <script src="_framework/blazor.server.js"></script>
+</body>
+</html>

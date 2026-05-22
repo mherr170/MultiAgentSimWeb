@@ -1,0 +1,170 @@
+@using MultiAgentSimWeb.Models
+@using MultiAgentSimWeb.Services
+
+<div class="inventory-panel">
+
+    @* ── Tab strip ────────────────────────────────────────── *@
+    <div class="inv-tab-strip">
+        @foreach (var kvp in AgentColors)
+        {
+            var name  = kvp.Key;
+            var color = kvp.Value;
+            var active = name == ActiveAgent;
+            <button class="inv-tab @(active ? "inv-tab-active" : "")"
+                    style="--tab-color: @color"
+                    @onclick="() => SelectAgent(name)">
+                <PixelPortrait AgentName="@name" AgentColor="@color" PixelSize="2" />
+                <span class="inv-tab-name">@name</span>
+            </button>
+        }
+    </div>
+
+    @* ── Selected agent body ──────────────────────────────── *@
+    @if (ActiveAgent is not null && AgentColors.TryGetValue(ActiveAgent, out var activeColor))
+    {
+        var agentName = ActiveAgent;
+        var color     = activeColor;
+        var inv       = World.GetInventory(agentName);
+        var (ax, ay)  = World.GetAgentPosition(agentName);
+        var onGround  = ax >= 0 ? World.GetItemsAt(ax, ay) : (IReadOnlyList<ItemInstance>)[];
+        var hunger    = World.GetHunger(agentName);
+        var thirst    = World.GetThirst(agentName);
+        var mood      = World.GetMood(agentName);
+
+        float moodBarWidth    = Math.Abs(mood.Mood);
+        string moodFillClass  = mood.Mood > 10f  ? "mood-pos"  : mood.Mood < -10f  ? "mood-neg"  : "mood-neutral";
+        string stressFillClass= mood.Stress >= 75f ? "stress-high" : mood.Stress >= 55f ? "stress-mid" : "stress-low";
+
+        var livingPeers = AgentColors.Keys.Where(n => n != agentName).ToList();
+
+        <div class="inv-agent-body">
+
+            <div class="inv-agent-header" style="--agent-color: @color">
+                <PixelPortrait AgentName="@agentName" AgentColor="@color" PixelSize="3" />
+                <span class="inv-agent-name inv-agent-name-clickable"
+                      style="color: @color"
+                      @onclick="() => OnAgentClicked.InvokeAsync(agentName)">
+                    @agentName
+                </span>
+                <span class="inv-agent-header-hint">click for memory</span>
+            </div>
+
+            <div class="inv-meters">
+                <div class="inv-meter-row">
+                    <span class="inv-meter-label">Hunger</span>
+                    <div class="inv-meter-bar">
+                        <div class="inv-meter-fill hunger" style="width: @(hunger)%"></div>
+                    </div>
+                    <span class="inv-meter-value">@hunger.ToString("F0")</span>
+                </div>
+                <div class="inv-meter-row">
+                    <span class="inv-meter-label">Thirst</span>
+                    <div class="inv-meter-bar">
+                        <div class="inv-meter-fill thirst" style="width: @(thirst)%"></div>
+                    </div>
+                    <span class="inv-meter-value">@thirst.ToString("F0")</span>
+                </div>
+                <div class="inv-meter-row">
+                    <span class="inv-meter-label">Mood</span>
+                    <div class="inv-meter-bar inv-meter-bar-mood">
+                        <div class="inv-meter-fill @moodFillClass" style="width: @(moodBarWidth)%"></div>
+                    </div>
+                    <span class="inv-meter-value inv-mood-label">@mood.MoodLabel</span>
+                </div>
+                <div class="inv-meter-row">
+                    <span class="inv-meter-label">Stress</span>
+                    <div class="inv-meter-bar">
+                        <div class="inv-meter-fill @stressFillClass" style="width: @(mood.Stress)%"></div>
+                    </div>
+                    <span class="inv-meter-value inv-mood-label">@mood.StressLabel</span>
+                </div>
+            </div>
+
+            @if (livingPeers.Count > 0)
+            {
+                var attCollapsed = _attitudesCollapsed.TryGetValue(agentName, out var c) && c;
+                <div class="inv-section-label inv-section-toggle" @onclick="() => ToggleAttitudes(agentName)">
+                    <span>Attitudes</span>
+                    <span class="inv-toggle-chevron">@(attCollapsed ? "▸" : "▾")</span>
+                </div>
+                @if (!attCollapsed)
+                {
+                    @foreach (var peer in livingPeers)
+                    {
+                        float trust = mood.GetTrust(peer);
+                        string trustLabel = AgentMood.TrustLabel(trust);
+                        string trustClass = trust > 20f ? "trust-pos" : trust < -10f ? "trust-neg" : "trust-neutral";
+                        <div class="inv-trust-row @trustClass">
+                            <span class="inv-trust-peer" style="color: @AgentColors[peer]">@peer</span>
+                            <span class="inv-trust-label">@trustLabel</span>
+                        </div>
+                    }
+                }
+            }
+
+            <div class="inv-section-label">Carrying (@inv.Count)</div>
+            @if (inv.Count > 0)
+            {
+                @foreach (var item in inv)
+                {
+                    <div class="inv-item">@item.DisplayName</div>
+                }
+            }
+            else
+            {
+                <div class="inv-empty">nothing</div>
+            }
+
+            @if (onGround.Count > 0)
+            {
+                <div class="inv-section-label">On ground here (@onGround.Count)</div>
+                @foreach (var item in onGround)
+                {
+                    <div class="inv-item inv-ground">@item.DisplayName</div>
+                }
+            }
+
+        </div>
+    }
+    else if (AgentColors.Count == 0)
+    {
+        <div class="inv-empty" style="padding: 1rem 0; text-align: center;">No agents alive.</div>
+    }
+
+</div>
+
+@code {
+    [Parameter, EditorRequired] public WorldState World { get; set; } = default!;
+    [Parameter, EditorRequired] public Dictionary<string, string> AgentColors { get; set; } = default!;
+    [Parameter] public string? InspectedAgent { get; set; }
+    [Parameter] public string? CurrentAgent { get; set; }
+    [Parameter] public EventCallback<string> OnAgentClicked { get; set; }
+
+    private string? _selectedAgent;
+    private readonly Dictionary<string, bool> _attitudesCollapsed = new();
+
+    // CurrentAgent (the agent actively taking their turn) always wins so the card
+    // follows the simulation automatically. Falls back to the last manual selection,
+    // then to whichever agent is first in the list.
+    private string? ActiveAgent
+    {
+        get
+        {
+            if (CurrentAgent != null && AgentColors.ContainsKey(CurrentAgent))
+                return CurrentAgent;
+            if (_selectedAgent != null && AgentColors.ContainsKey(_selectedAgent))
+                return _selectedAgent;
+            return AgentColors.Keys.FirstOrDefault();
+        }
+    }
+
+    private void SelectAgent(string name)
+    {
+        _selectedAgent = name;
+    }
+
+    private void ToggleAttitudes(string agentName)
+    {
+        _attitudesCollapsed[agentName] = !(_attitudesCollapsed.TryGetValue(agentName, out var v) && v);
+    }
+}

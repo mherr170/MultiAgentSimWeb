@@ -1,0 +1,539 @@
+@page "/"
+@rendermode InteractiveServer
+
+@using MultiAgentSimWeb.Models
+@inject SimulationService Sim
+@inject AgentProfileService ProfileService
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="sim-app">
+
+    <div class="sim-header">
+        <h1>Multi-Agent Simulation</h1>
+        <p>Configure agents, describe a situation, and watch them reason, cooperate, and survive.</p>
+    </div>
+
+    <div class="config-panel">
+
+        <div class="field-group">
+            <label>Situation</label>
+            <textarea @bind="situation" rows="4" disabled="@Sim.IsRunning"
+                      placeholder="Describe the scenario the agents will be dropped into..." />
+        </div>
+
+        <div class="config-divider"></div>
+
+        <div class="field-group">
+            <span>Agents</span>
+            @for (int i = 0; i < agentDefs.Count; i++)
+            {
+                var idx = i;
+                <div class="agent-row ab-@(idx % AccentColors.Length)">
+                    <input type="text" @bind="agentDefs[idx].Name" placeholder="Name"
+                           disabled="@Sim.IsRunning" />
+                    <textarea @bind="agentDefs[idx].Persona" rows="2"
+                              placeholder="Personality and goals..."
+                              disabled="@Sim.IsRunning" />
+                    <button class="btn-remove" @onclick="() => RemoveAgent(idx)"
+                            disabled="@(Sim.IsRunning || agentDefs.Count <= 1)">&#x2715;</button>
+                </div>
+            }
+            <button class="btn-add" @onclick="AddAgent" disabled="@Sim.IsRunning">+ Add Agent</button>
+        </div>
+
+        <div class="config-divider"></div>
+
+        <div class="run-controls">
+            <label class="rounds-label">
+                Rounds
+                <input type="number" @bind="rounds" min="1" max="200" disabled="@Sim.IsRunning" />
+            </label>
+            <label class="rounds-label pace-label" title="Minimum time per agent turn. Useful when the LLM responds faster than you can read.">
+                Min turn
+                <div class="pace-control">
+                    <input type="range" @bind="minTurnSeconds" @bind:after="() => {}" min="0" max="10" step="0.5"
+                           disabled="@Sim.IsRunning" class="pace-slider" />
+                    <span class="pace-value">@(minTurnSeconds == 0 ? "off" : $"{minTurnSeconds:0.#}s")</span>
+                </div>
+            </label>
+            <div class="provider-toggle">
+                <label class="provider-option">
+                    <input type="radio" name="provider" value="anthropic"
+                           checked="@(provider == "anthropic")"
+                           @onchange='() => provider = "anthropic"'
+                           disabled="@Sim.IsRunning" />
+                    Claude (Anthropic)
+                </label>
+                <label class="provider-option">
+                    <input type="radio" name="provider" value="lmstudio"
+                           checked="@(provider == "lmstudio")"
+                           @onchange='() => provider = "lmstudio"'
+                           disabled="@Sim.IsRunning" />
+                    Local (LM Studio)
+                </label>
+            </div>
+            @if (provider == "lmstudio")
+            {
+                <div class="lmstudio-config">
+                    <label class="lmstudio-field">
+                        <span>Endpoint</span>
+                        <input type="text" @bind="lmStudioEndpoint" disabled="@Sim.IsRunning"
+                               placeholder="http://10.0.0.119:1234/v1/chat/completions" />
+                    </label>
+                    <label class="lmstudio-field">
+                        <span>Model</span>
+                        <input type="text" @bind="lmStudioModel" disabled="@Sim.IsRunning"
+                               placeholder="gemma-3-4b" />
+                    </label>
+                </div>
+            }
+            <button class="btn-start" @onclick="StartSimulation"
+                    disabled="@(Sim.IsRunning || !CanStart)">
+                @(Sim.IsRunning ? "Running..." : "▶ Start")
+            </button>
+            @if (Sim.IsRunning)
+            {
+                @if (Sim.IsPaused)
+                {
+                    <button class="btn-resume"     @onclick="() => Sim.Resume()"   disabled="@(Sim.CurrentAgent != null)">▶ Resume</button>
+                    <button class="btn-step"       @onclick="() => Sim.Step()"     disabled="@(Sim.CurrentAgent != null)">&#x2192; Step</button>
+                    <button class="btn-step-round" @onclick="() => Sim.StepRound()" disabled="@(Sim.CurrentAgent != null)">&#x21D2; Round</button>
+                }
+                else
+                {
+                    <button class="btn-pause" @onclick="() => Sim.Pause()">&#x23F8; Pause</button>
+                }
+                <button class="btn-stop" @onclick="() => Sim.Stop()">&#9632; Stop</button>
+            }
+        </div>
+
+    </div>
+
+    @if (configError is not null)
+    {
+        <div class="config-error">@configError</div>
+    }
+
+    @if (Sim.World != null)
+    {
+        <div class="sim-panels">
+            <MapView World="Sim.World" AgentColors="Sim.AgentColorHex"
+                     OnAgentClicked="InspectAgent" />
+            <InventoryView World="Sim.World" AgentColors="Sim.AgentColorHex"
+                           InspectedAgent="@_inspectedAgent"
+                           CurrentAgent="@Sim.CurrentAgent?.Name"
+                           OnAgentClicked="InspectAgent" />
+            @if (Sim.Events.Count > 0 || Sim.IsRunning)
+            {
+                <div class="log-panel">
+                    <div class="log-header">
+                <span class="log-title">Simulation Log</span>
+                @if (Sim.IsRunning)
+                {
+                    @if (Sim.IsPaused)
+                    { <span class="log-paused">⏸ Paused</span> }
+                    else
+                    { <span class="log-live">● Live</span> }
+                }
+                <button class="btn-verbose @(_verbose ? "active" : "")"
+                        @onclick="() => _verbose = !_verbose"
+                        title="Show internal state changes (mood, stress, meters)">
+                    dev
+                </button>
+            </div>
+            @{
+                var currentRound = Sim.World?.CurrentRound ?? 0;
+                var criticalAlerts = Sim.Events
+                    .Select((evt, idx) => (evt, idx))
+                    .Where(x => (x.evt.Type == SimEventTypes.Death || x.evt.Type == SimEventTypes.Animal || x.evt.Type == SimEventTypes.AnimalAttack || x.evt.Type == SimEventTypes.DirectResponse)
+                                && !_dismissedAlerts.Contains(x.idx)
+                                && currentRound - x.evt.Round <= 5)
+                    .TakeLast(3)
+                    .ToList();
+            }
+            @if (criticalAlerts.Count > 0)
+            {
+                <div class="alert-strip">
+                    @foreach (var (evt, idx) in criticalAlerts)
+                    {
+                        var icon = evt.Type switch { SimEventTypes.Death => "☠", SimEventTypes.Animal or SimEventTypes.AnimalAttack => "🐾", _ => "💬" };
+                        var colorHex = AlertColorHex(evt.AgentColor);
+                        var truncated = evt.Content.Length > 80 ? evt.Content[..80] + "…" : evt.Content;
+                        var capturedIdx = idx;
+                        <div class="alert-card" style="border-left-color: @colorHex">
+                            <span class="alert-icon">@icon</span>
+                            <span class="alert-agent" style="color: @colorHex">@evt.AgentName</span>
+                            <span class="alert-content">@truncated</span>
+                            <button class="alert-dismiss" @onclick="() => _dismissedAlerts.Add(capturedIdx)">✕</button>
+                        </div>
+                    }
+                </div>
+            }
+            @if (Sim.AgentColorHex.Count > 0)
+            {
+                <div class="log-filter-bar">
+                    <button class="btn-agent-filter @(_filteredAgents.Count == 0 ? "filter-all-active" : "filter-all-inactive")"
+                            @onclick="() => _filteredAgents.Clear()">All</button>
+                    @foreach (var kv in Sim.AgentColorHex)
+                    {
+                        var agentName = kv.Key;
+                        var agentHex  = kv.Value;
+                        var isShown   = _filteredAgents.Count == 0 || _filteredAgents.Contains(agentName);
+                        <button class="btn-agent-filter @(isShown ? "filter-active" : "filter-inactive")"
+                                style="--agent-color: @agentHex"
+                                @onclick="() => ToggleAgentFilter(agentName)">@agentName</button>
+                    }
+                </div>
+            }
+            <div class="log-filter-bar">
+                <button class="btn-important-filter @(_importantOnly ? "important-active" : "")"
+                        title="Show only consequential events: deaths, attacks, conversations, and resource changes"
+                        @onclick="ToggleImportantOnly">★ Important</button>
+                <button class="btn-agent-filter @((!_importantOnly && _filteredTypes.Count == 0) ? "filter-all-active" : "filter-all-inactive")"
+                        @onclick="() => { _importantOnly = false; _filteredTypes.Clear(); }">All Types</button>
+                @foreach (var group in TypeGroups)
+                {
+                    var g = group;
+                    var isShown = !_importantOnly && (_filteredTypes.Count == 0 || g.Types.Any(t => _filteredTypes.Contains(t)));
+                    <button class="btn-agent-filter @(isShown ? "filter-active" : "filter-inactive")"
+                            @onclick="() => ToggleTypeGroupFilter(g.Types)">@g.Label</button>
+                }
+            </div>
+            @{var summary = GetSummary();}
+            @if (summary != null && !_summaryDismissed)
+            {
+                <div class="summary-card">
+                    <div class="summary-card-header">
+                        <span>Simulation Complete</span>
+                        <button class="summary-dismiss" @onclick="() => _summaryDismissed = true">✕</button>
+                    </div>
+                    <div class="summary-stats">
+                        <div class="stat-item"><span class="stat-value">@summary.Rounds</span><span class="stat-label">rounds</span></div>
+                        <div class="stat-item"><span class="stat-value">@summary.Survivors</span><span class="stat-label">survivors</span></div>
+                        <div class="stat-item"><span class="stat-value">@summary.Deaths</span><span class="stat-label">deaths</span></div>
+                        <div class="stat-item"><span class="stat-value">@summary.SpeechCount</span><span class="stat-label">exchanges</span></div>
+                        <div class="stat-item"><span class="stat-value">@summary.ItemsCollected</span><span class="stat-label">items found</span></div>
+                        <div class="stat-item"><span class="stat-value">@summary.AnimalEncounters</span><span class="stat-label">animal enc.</span></div>
+                    </div>
+                    <div class="summary-mvp">Most active: <strong>@summary.MostActiveAgent</strong></div>
+                </div>
+            }
+            <div class="output-panel" @ref="_logPanel">
+                @* Newest-first: the live indicator and latest events sit at the top so
+                   the user never has to scroll to see what's currently happening. *@
+                @if (Sim.IsRunning && Sim.IsPaused)
+                {
+                    <div class="paused-row">
+                        ⏸ Paused — click <strong>Resume</strong> to run automatically, <strong>Step</strong> to advance one agent turn, or <strong>Round</strong> to complete one full round.
+                    </div>
+                }
+                else if (Sim.IsRunning && Sim.CurrentAgent != null)
+                {
+                    <div class="thinking-row">
+                        <span class="@Sim.CurrentAgent.Color">[@Sim.CurrentAgent.Name]</span>
+                        <span class="thinking-dots"></span>
+                    </div>
+                }
+
+                @foreach (var (header, evts) in LogGroupsNewestFirst())
+                {
+                    @if (header != null)
+                    {
+                        <div class="round-header">
+                            @if (header.Content == "All agents have perished.")
+                            {
+                                @header.Content
+                            }
+                            else
+                            {
+                                <span class="round-number">Hour @header.Content</span>
+                                <span class="round-time">@header.Label</span>
+                            }
+                        </div>
+                    }
+                    @foreach (var evt in evts)
+                    {
+                        @if (((evt.Type != "dev" && evt.Type != "llm") || _verbose) &&
+                             (_filteredAgents.Count == 0 || _filteredAgents.Contains(evt.AgentName)) &&
+                             (_importantOnly
+                                ? ImportantTypes.Contains(evt.Type)
+                                : (_filteredTypes.Count == 0 || _filteredTypes.Contains(evt.Type))))
+                        {
+                            <div class="event @evt.Type">
+                                <div class="event-head">
+                                    @if (!string.IsNullOrEmpty(evt.AgentName))
+                                    {
+                                        <PixelPortrait AgentName="@evt.AgentName" AgentColor="@AlertColorHex(evt.AgentColor)" PixelSize="2" />
+                                        <span class="event-agent @evt.AgentColor">[@evt.AgentName]</span>
+                                    }
+                                    <span class="event-label">@evt.Label</span>
+                                </div>
+                                <span class="event-content">@evt.Content</span>
+                            </div>
+                        }
+                    }
+                }
+            </div>
+                </div>
+            }
+            @if (ChatEvents.Count > 0)
+            {
+                <div class="chat-strip" @ref="_chatStrip">
+                    @foreach (var ce in ChatEvents)
+                    {
+                        var cc = AlertColorHex(ce.AgentColor);
+                        <div class="chat-msg @(ce.Type == SimEventTypes.DirectResponse ? "chat-msg-reply" : "")"
+                             style="--cm-color: @cc">
+                            <div class="chat-msg-header">
+                                <PixelPortrait AgentName="@ce.AgentName" AgentColor="@cc" PixelSize="2" />
+                                <span class="chat-msg-name" style="color: @cc">@ce.AgentName</span>
+                                @if (ce.Type == SimEventTypes.DirectResponse)
+                                { <span class="chat-msg-tag">↩ replies</span> }
+                            </div>
+                            <div class="chat-msg-text">@ce.Content</div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<AgentMemoryDrawer
+    AgentName="@_inspectedAgent"
+    AgentColor="@InspectedAgentColor"
+    Memory="@InspectedAgentMemory"
+    OnClose="CloseInspector" />
+
+@code {
+    private static readonly string[] AccentColors = ["ac-0", "ac-1", "ac-2", "ac-3", "ac-4", "ac-5"];
+    private static readonly string[] AccentHex    = ["#22d3ee", "#facc15", "#c084fc", "#4ade80", "#fb923c", "#f472b6"];
+
+    private static readonly (string Label, string[] Types)[] TypeGroups =
+    [
+        ("Thoughts", [SimEventTypes.Thought]),
+        ("Speech",   [SimEventTypes.Speech, SimEventTypes.DirectResponse]),
+        ("Actions",  [SimEventTypes.Action, SimEventTypes.Move, SimEventTypes.DrinkTap, SimEventTypes.Forage]),
+        ("Items",    [SimEventTypes.Item, SimEventTypes.Scavenge]),
+        ("Animals",  [SimEventTypes.Animal, SimEventTypes.AnimalAttack]),
+        ("Deaths",   [SimEventTypes.Death]),
+        ("Diag",     [SimEventTypes.Diag]),
+    ];
+
+    // Consequential / pivotal events: deaths, combat, conversations, and resource changes.
+    // Routine noise (thoughts, moves, generic actions, foraging) is excluded.
+    private static readonly HashSet<string> ImportantTypes =
+    [
+        SimEventTypes.Death,
+        SimEventTypes.AnimalAttack,
+        SimEventTypes.Animal,
+        SimEventTypes.Speech,
+        SimEventTypes.DirectResponse,
+        SimEventTypes.Item,
+        SimEventTypes.Scavenge,
+    ];
+
+    // Groups the event feed by round and returns it newest-first: the latest round at
+    // the top, and the newest event first within each round. Round headers stay on top
+    // of their own group so they keep labelling the events that follow them.
+    private List<(SimEvent? Header, List<SimEvent> Events)> LogGroupsNewestFirst()
+    {
+        var groups = new List<(SimEvent? Header, List<SimEvent> Events)>();
+        SimEvent? header = null;
+        var current = new List<SimEvent>();
+
+        foreach (var e in Sim.Events)
+        {
+            if (e.Type == SimEventTypes.Round)
+            {
+                groups.Add((header, current));
+                header = e;
+                current = new List<SimEvent>();
+            }
+            else
+            {
+                current.Add(e);
+            }
+        }
+        groups.Add((header, current));
+
+        groups.Reverse();                       // newest round first
+        foreach (var g in groups) g.Events.Reverse(); // newest event first within a round
+        return groups;
+    }
+
+    private string? _inspectedAgent;
+    private void InspectAgent(string name) => _inspectedAgent = (_inspectedAgent == name) ? null : name;
+    private void CloseInspector() => _inspectedAgent = null;
+
+    private string? InspectedAgentColor =>
+        _inspectedAgent != null && Sim.AgentColorHex.TryGetValue(_inspectedAgent, out var c) ? c : null;
+
+    private IReadOnlyList<string>? InspectedAgentMemory =>
+        _inspectedAgent != null ? Sim.World?.Memory.GetMemory(_inspectedAgent).Recent : null;
+
+    private string situation = "";
+    private int    rounds         = 50;
+    private double minTurnSeconds = 0;
+    private string provider = "lmstudio";
+    private string lmStudioEndpoint = "http://10.0.0.119:1234/v1/chat/completions";
+    private string lmStudioModel    = "qwen2.5-7b-instruct-1m";
+
+    private List<AgentDefinition> agentDefs = [];
+
+    protected override void OnInitialized()
+    {
+        Sim.OnStateChanged += HandleStateChanged;
+
+        var profiles = ProfileService.Profiles;
+        situation = profiles.Situation;
+        agentDefs = profiles.Agents
+            .Select(a => new AgentDefinition { Name = a.Name, Persona = a.Persona })
+            .ToList();
+
+        if (agentDefs.Count == 0)
+            agentDefs.Add(new AgentDefinition { Name = "Agent 1", Persona = "" });
+    }
+
+    private string? configError;
+    private bool _verbose = false;
+    private bool _summaryDismissed = false;
+    private ElementReference _logPanel;
+    private ElementReference _chatStrip;
+    private HashSet<string> _filteredAgents = new();
+    private HashSet<string> _filteredTypes  = new();
+    private bool _importantOnly = false;
+    private HashSet<int> _dismissedAlerts = new();
+
+    private IReadOnlyList<SimEvent> ChatEvents =>
+        Sim.Events
+           .Where(e => e.Type == SimEventTypes.Speech || e.Type == SimEventTypes.DirectResponse)
+           .TakeLast(24)
+           .ToList();
+
+    private record SimSummary(int Rounds, int Survivors, int Deaths, int SpeechCount, int ItemsCollected, int AnimalEncounters, string MostActiveAgent);
+
+    private SimSummary? GetSummary()
+    {
+        if (Sim.IsRunning || !Sim.Events.Any()) return null;
+        var events = Sim.Events;
+        return new SimSummary(
+            Rounds: Sim.World?.CurrentRound ?? 0,
+            Survivors: Sim.AgentColorHex.Count,
+            Deaths: events.Count(e => e.Type == SimEventTypes.Death),
+            SpeechCount: events.Count(e => e.Type == SimEventTypes.Speech || e.Type == SimEventTypes.DirectResponse),
+            ItemsCollected: events.Count(e => e.Type == SimEventTypes.Item || e.Type == SimEventTypes.Scavenge),
+            AnimalEncounters: events.Count(e => e.Type == SimEventTypes.Animal || e.Type == SimEventTypes.AnimalAttack),
+            MostActiveAgent: events
+                .Where(e => !string.IsNullOrEmpty(e.AgentName) && e.Type != "round")
+                .GroupBy(e => e.AgentName!)
+                .OrderByDescending(g => g.Count())
+                .FirstOrDefault()?.Key ?? "—"
+        );
+    }
+
+    private string AlertColorHex(string agentColor) =>
+        agentColor.StartsWith("ac-") && int.TryParse(agentColor[3..], out var i) && i < AccentHex.Length
+            ? AccentHex[i] : "#52525b";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Sim.Events.Count > 0 || Sim.IsRunning)
+        {
+            try { await JS.InvokeVoidAsync("scrollToTop", _logPanel); }
+            catch { /* panel not yet in DOM */ }
+            try { await JS.InvokeVoidAsync("scrollToRight", _chatStrip); }
+            catch { /* chat strip not yet in DOM */ }
+        }
+    }
+
+    private void ToggleAgentFilter(string name)
+    {
+        if (_filteredAgents.Count == 0)
+            _filteredAgents.Add(name);
+        else if (!_filteredAgents.Remove(name))
+            _filteredAgents.Add(name);
+    }
+
+    private void ToggleImportantOnly()
+    {
+        _importantOnly = !_importantOnly;
+        if (_importantOnly) _filteredTypes.Clear(); // Important mode supersedes manual type selection
+    }
+
+    private void ToggleTypeGroupFilter(string[] types)
+    {
+        _importantOnly = false; // picking a specific type group exits Important mode
+        bool allPresent = types.All(t => _filteredTypes.Contains(t));
+        if (_filteredTypes.Count == 0)
+        {
+            // switching from "all" — activate only this group
+            foreach (var t in types) _filteredTypes.Add(t);
+        }
+        else if (allPresent)
+        {
+            foreach (var t in types) _filteredTypes.Remove(t);
+        }
+        else
+        {
+            foreach (var t in types) _filteredTypes.Add(t);
+        }
+    }
+
+    private bool CanStart =>
+        agentDefs.Count > 0 &&
+        agentDefs.All(a => !string.IsNullOrWhiteSpace(a.Name)) &&
+        !string.IsNullOrWhiteSpace(situation);
+
+    public void Dispose()
+    {
+        Sim.OnStateChanged -= HandleStateChanged;
+    }
+
+    private Task HandleStateChanged() => InvokeAsync(StateHasChanged);
+
+    private void AddAgent() =>
+        agentDefs.Add(new AgentDefinition { Name = $"Agent {agentDefs.Count + 1}", Persona = "" });
+
+    private void RemoveAgent(int index) => agentDefs.RemoveAt(index);
+
+    private async Task StartSimulation()
+    {
+        configError = null;
+
+        if (provider == "anthropic")
+        {
+            var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") ?? "";
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                configError = "ANTHROPIC_API_KEY environment variable is not set. Set it before starting, or switch to Local (LM Studio).";
+                return;
+            }
+        }
+
+        var selectedProvider = provider;
+        var endpoint = string.IsNullOrWhiteSpace(lmStudioEndpoint)
+            ? "http://10.0.0.119:1234/v1/chat/completions"
+            : lmStudioEndpoint.Trim();
+        var model = string.IsNullOrWhiteSpace(lmStudioModel) ? "qwen2.5-7b-instruct-1m" : lmStudioModel.Trim();
+        var config = new SimulationConfig
+        {
+            Situation     = situation.Trim(),
+            Agents        = agentDefs.Select(a => new AgentDefinition { Name = a.Name, Persona = a.Persona }).ToList(),
+            Rounds        = rounds,
+            MinTurnMs     = (int)(minTurnSeconds * 1000),
+            AgentColors   = AccentColors,
+            AgentColorHex = AccentHex,
+            LlmClientFactory = () => selectedProvider == "lmstudio"
+                ? new LmStudioLlmClient(endpoint, model)
+                : new AnthropicLlmClient(Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") ?? "")
+        };
+
+        _summaryDismissed = false;
+        _dismissedAlerts.Clear();
+        _filteredAgents.Clear();
+        _filteredTypes.Clear();
+        await Sim.RunAsync(config);
+    }
+}

@@ -1,0 +1,33 @@
+@if (AgentName != null && Memory != null)
+{
+    <div class="memory-drawer open">
+        <div class="memory-drawer-header">
+            <PixelPortrait AgentName="@AgentName" AgentColor="@(AgentColor ?? "#52525b")" PixelSize="4" />
+            <span class="memory-drawer-title" style="border-left: 3px solid @(AgentColor ?? "#52525b")">
+                @AgentName — Memory Log
+            </span>
+            <button class="memory-drawer-close" @onclick="OnClose">&#x2715;</button>
+        </div>
+        <div class="memory-drawer-body">
+            @if (!Memory.Any())
+            {
+                <p class="memory-empty">No memories yet.</p>
+            }
+            else
+            {
+                @foreach (var entry in Memory)
+                {
+                    <div class="memory-entry">@entry</div>
+                }
+            }
+        </div>
+    </div>
+    <div class="memory-backdrop" @onclick="OnClose"></div>
+}
+
+@code {
+    [Parameter] public string? AgentName  { get; set; }
+    [Parameter] public string? AgentColor { get; set; }
+    [Parameter] public IReadOnlyList<string>? Memory { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+}
