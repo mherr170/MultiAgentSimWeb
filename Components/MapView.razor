@@ -1,5 +1,6 @@
 @using MultiAgentSimWeb.Services
 @using MultiAgentSimWeb.Models
+@inject IJSRuntime JS
 
 @* Hidden SVG — pattern defs are document-scoped, usable by any SVG on this page *@
 <svg width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true">
@@ -88,20 +89,20 @@
 
 <div class="map-panel">
     <div class="map-panel-header">
-        <div class="map-panel-title">Map — 30×30</div>
+        <div class="map-panel-title">Map — 40×40</div>
         <div class="map-zoom-controls">
             <button class="zoom-btn" @onclick="ZoomOut" disabled="@(_cellSize <= _zoomLevels[0])">−</button>
             <button class="zoom-btn" @onclick="ZoomIn"  disabled="@(_cellSize >= _zoomLevels[_zoomLevels.Length - 1])">+</button>
         </div>
     </div>
 
-    <div class="map-scroll-container">
+    <div class="map-scroll-container" @ref="_scrollContainer">
         <svg width="@(_cellSize * World.MapWidth)"
              height="@(_cellSize * World.MapHeight)"
              xmlns="http://www.w3.org/2000/svg"
              @onmouseleave="() => _hoveredCell = null">
 
-            @* Layer 1: Terrain *@
+            @* Layer 1: Terrain — no stroke so terrain tiles flow continuously *@
             @for (int row = 0; row < World.MapHeight; row++)
             {
                 for (int col = 0; col < World.MapWidth; col++)
@@ -111,19 +112,50 @@
                     var cell = World.GetCell(cx, cy);
                     <rect x="@(cx * _cellSize)"
                           y="@(cy * _cellSize)"
-                          width="@_cellSize"
-                          height="@_cellSize"
+                          width="@(_cellSize + 1)"
+                          height="@(_cellSize + 1)"
                           fill="@TerrainFill(cell.Terrain)"
-                          stroke="#07070f"
-                          stroke-width="0.4"
+                          stroke="none"
                           @onmouseover="e => { _hoveredCell = (cx, cy); _tooltipX = e.ClientX + 12; _tooltipY = e.ClientY - 8; }" />
                 }
             }
 
-            @* Layer 1b: Building name labels *@
-            @foreach (var (label, cx, cy, floors) in _buildingLabels)
+            @* Layer 1.5: Faint cell grid — only visible at 28px+ to aid navigation *@
+            @if (_cellSize >= 28)
             {
-                <g transform="translate(@cx.ToString("F1"), @cy.ToString("F1"))">
+                @for (int row = 0; row < World.MapHeight; row++)
+                {
+                    for (int col = 0; col < World.MapWidth; col++)
+                    {
+                        <rect x="@(col * _cellSize)"
+                              y="@(row * _cellSize)"
+                              width="@_cellSize"
+                              height="@_cellSize"
+                              fill="none"
+                              stroke="#1a1a2a"
+                              stroke-width="0.3"
+                              style="pointer-events:none" />
+                    }
+                }
+            }
+
+            @* Layer 1b: Building outlines — one rect per named block *@
+            @foreach (var b in _buildings)
+            {
+                <rect x="@b.Ox.ToString("F1")"
+                      y="@b.Oy.ToString("F1")"
+                      width="@b.Ow.ToString("F1")"
+                      height="@b.Oh.ToString("F1")"
+                      fill="none"
+                      stroke="@BuildingOutlineColor(b.Terrain)"
+                      stroke-width="1.2"
+                      style="pointer-events:none" />
+            }
+
+            @* Layer 1c: Building name labels *@
+            @foreach (var b in _buildings)
+            {
+                <g transform="translate(@b.Cx.ToString("F1"), @b.Cy.ToString("F1"))">
                     <text x="0" y="0"
                           font-size="5"
                           fill="#ffffff"
@@ -131,13 +163,13 @@
                           text-anchor="middle"
                           dominant-baseline="middle"
                           font-family="'Segoe UI', system-ui, sans-serif"
-                          style="user-select:none;pointer-events:none">@label</text>
+                          style="user-select:none;pointer-events:none">@b.Label</text>
                     <text x="8" y="-6"
                           font-size="4"
                           fill="#aaaacc"
-                          opacity="@(floors > 1 ? "0.5" : "0")"
+                          opacity="@(b.Floors > 1 ? "0.5" : "0")"
                           text-anchor="middle"
-                          style="user-select:none;pointer-events:none">@(floors > 1 ? $"⌂{floors}" : "")</text>
+                          style="user-select:none;pointer-events:none">@(b.Floors > 1 ? $"⌂{b.Floors}" : "")</text>
                 </g>
             }
 
@@ -155,18 +187,27 @@
                 }
             }
 
-            @* Layer 2: Item markers *@
+            @* Layer 2: Item markers with count *@
             @for (int row = 0; row < World.MapHeight; row++)
             {
                 for (int col = 0; col < World.MapWidth; col++)
                 {
                     if (World.HasItemsAt(col, row))
                     {
-                        <rect x="@(col * _cellSize + _cellSize / 2 - 2)"
-                              y="@(row * _cellSize + _cellSize / 2 - 2)"
-                              width="4" height="4"
-                              fill="#f59e0b" opacity="0.9"
-                              rx="1" />
+                        var itemCount = World.GetItemsAt(col, row).Count;
+                        double imx = col * _cellSize + _cellSize * 0.5;
+                        double imy = row * _cellSize + _cellSize * 0.5;
+                        <circle cx="@imx.ToString("F1")" cy="@imy.ToString("F1")"
+                                r="2.5" fill="#f59e0b" opacity="0.9" />
+                        @if (itemCount > 1 && _cellSize >= 12)
+                        {
+                            string itx = (imx + 3.5).ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+                            string ity = (imy + 1.5).ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+                            <g><text x="@itx" y="@ity"
+                                     font-size="4" fill="#f59e0b" opacity="0.9"
+                                     font-family="'Segoe UI', system-ui, sans-serif"
+                                     style="user-select:none;pointer-events:none">@itemCount</text></g>
+                        }
                     }
                 }
             }
@@ -178,8 +219,8 @@
                 double ay2 = animal.Y * _cellSize + _cellSize * 0.25;
                 bool isLarge = animal.Size == MultiAgentSimWeb.Models.AnimalSize.Large;
                 string aColor = isLarge ? "#ef4444" : "#86efac";
-                int aFontSize = isLarge ? 9 : 7;
-                string glyph = isLarge ? "✦" : "·";
+                string glyph = AnimalGlyph(animal.Type);
+                int aFontSize = isLarge ? (_cellSize >= 20 ? 11 : 9) : (_cellSize >= 20 ? 9 : 7);
                 <g transform="translate(@ax2.ToString("F1"), @ay2.ToString("F1"))">
                     <text x="0" y="0" font-size="@aFontSize" fill="@aColor"
                           font-family="monospace" text-anchor="middle"
@@ -194,54 +235,79 @@
                 var (ax, ay) = World.GetAgentPosition(kvp.Key);
                 if (ax >= 0)
                 {
-                    double cx = ax * _cellSize + _cellSize / 2.0;
-                    double cy = ay * _cellSize + _cellSize / 2.0;
+                    double cx    = ax * _cellSize + _cellSize / 2.0;
+                    double cy    = ay * _cellSize + _cellSize / 2.0;
                     string color = kvp.Value;
+                    bool isActive = kvp.Key == CurrentAgent;
+                    float hunger  = World.GetHunger(kvp.Key);
+                    float thirst  = World.GetThirst(kvp.Key);
+                    string ringColor = HealthRingColor(hunger, thirst);
+                    double ringR = _cellSize * 0.44;
+                    int floor = World.GetAgentFloor(kvp.Key);
+
                     <g transform="translate(@cx.ToString("F1"), @cy.ToString("F1"))"
                        style="cursor:pointer"
                        @onclick="() => OnAgentClicked.InvokeAsync(kvp.Key)">
-                        <title>@kvp.Key (@ax, @ay) — click to inspect memory</title>
-                        @if (_cellSize <= _zoomLevels[0])
+                        <title>@kvp.Key (@ax,@ay) F@floor — H:@hunger.ToString("F0") T:@thirst.ToString("F0") — click to inspect</title>
+
+                        @* Active-agent pulse ring (behind everything) *@
+                        @if (isActive)
                         {
-                            @* Overview: simple dot *@
-                            <circle cx="0" cy="0" r="4" fill="@color" stroke="#07070f" stroke-width="0.8" />
+                            <circle cx="0" cy="0" r="@ringR.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)"
+                                    fill="none" stroke="@color" stroke-width="1.5"
+                                    class="agent-active-ring" />
                         }
-                        else if (_cellSize <= _zoomLevels[1])
+
+                        @* Health ring *@
+                        @if (_cellSize >= 12)
                         {
-                            @* Mid-zoom: polygon shape + initial *@
-                            string points = ShapePoints[agentIdx % ShapePoints.Length];
+                            <circle cx="0" cy="0" r="@ringR.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)"
+                                    fill="none" stroke="@ringColor" stroke-width="1.2" opacity="0.7"
+                                    style="pointer-events:none" />
+                        }
+
+                        @* Avatar shape — LOD *@
+                        @if (_cellSize <= 12)
+                        {
+                            @* Overview / small: dot *@
+                            <circle cx="0" cy="0" r="@(_cellSize * 0.30)" fill="@color" stroke="#07070f" stroke-width="0.8" />
+                        }
+                        else if (_cellSize <= 20)
+                        {
+                            @* Mid-zoom: polygon + initial *@
+                            string pts     = ShapePoints[agentIdx % ShapePoints.Length];
                             string initial = kvp.Key.Length > 0 ? kvp.Key[0].ToString().ToUpper() : "?";
-                            <polygon points="@points"
-                                     fill="@color"
-                                     stroke="#07070f"
-                                     stroke-width="1.2"
-                                     stroke-linejoin="round" />
-                            <g>
-                                <text x="0" y="2.8"
-                                      text-anchor="middle"
-                                      dominant-baseline="middle"
-                                      font-family="'Segoe UI', system-ui, sans-serif"
-                                      font-size="7"
-                                      font-weight="800"
-                                      fill="#0a0a18"
-                                      style="user-select:none;pointer-events:none">@initial</text>
-                            </g>
+                            <polygon points="@pts" fill="@color" stroke="#07070f" stroke-width="1.2" stroke-linejoin="round" />
+                            <g><text x="0" y="2.8" text-anchor="middle" dominant-baseline="middle"
+                                     font-family="'Segoe UI', system-ui, sans-serif"
+                                     font-size="7" font-weight="800" fill="#0a0a18"
+                                     style="user-select:none;pointer-events:none">@initial</text></g>
                         }
                         else
                         {
-                            @* Detail zoom (28px+): person silhouette + short name *@
+                            @* Detail (28px+): silhouette + name *@
                             string shortName = kvp.Key.Length <= 4 ? kvp.Key : kvp.Key[..4];
                             <use href="#agent-person" x="-5" y="-8" width="10" height="16"
                                  fill="@color" stroke="#07070f" stroke-width="0.7" />
-                            <g>
-                                <text x="0" y="12"
-                                      text-anchor="middle"
-                                      font-family="'Segoe UI', system-ui, sans-serif"
-                                      font-size="5.5"
-                                      font-weight="700"
-                                      fill="@color"
-                                      style="user-select:none;pointer-events:none">@shortName</text>
-                            </g>
+                            <g><text x="0" y="12" text-anchor="middle"
+                                     font-family="'Segoe UI', system-ui, sans-serif"
+                                     font-size="5.5" font-weight="700" fill="@color"
+                                     style="user-select:none;pointer-events:none">@shortName</text></g>
+                        }
+
+                        @* Floor badge — shown when above floor 1 *@
+                        @if (floor > 1 && _cellSize >= 12)
+                        {
+                            double badgeX = _cellSize * 0.32;
+                            double badgeY = -_cellSize * 0.32;
+                            double fSize  = Math.Max(3.5, _cellSize * 0.18);
+                            <g><text x="@badgeX.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)"
+                                     y="@badgeY.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)"
+                                     font-size="@fSize.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)"
+                                     fill="@color" font-weight="700"
+                                     text-anchor="middle" dominant-baseline="middle"
+                                     font-family="'Segoe UI', system-ui, sans-serif"
+                                     style="user-select:none;pointer-events:none">F@floor</text></g>
                         }
                     </g>
                 }
@@ -327,35 +393,34 @@
                 </svg>
                 Items
             </span>
-            <span class="legend-item">
-                <svg width="10" height="10" viewBox="0 0 10 10">
-                    <text x="5" y="8" text-anchor="middle" font-size="8" fill="#86efac" font-family="monospace">·</text>
-                </svg>
-                Small animal
-            </span>
-            <span class="legend-item">
-                <svg width="10" height="10" viewBox="0 0 10 10">
-                    <text x="5" y="8" text-anchor="middle" font-size="9" fill="#ef4444" font-family="monospace">✦</text>
-                </svg>
-                Feral dog
-            </span>
+            <span class="legend-item" style="color:#86efac;font-size:0.7rem">🐀🐦🐱🐿🦊 small</span>
+            <span class="legend-item" style="color:#ef4444;font-size:0.7rem">🐕🦮🐶🐺🦌 large</span>
         </div>
     </div>
 </div>
 
 @code {
-    private int _cellSize = 20;
-    private static readonly int[] _zoomLevels = { 12, 20, 28 };
+    private int _cellSize = 12;
+    private static readonly int[] _zoomLevels = { 8, 12, 20, 28, 40 };
 
     private (int x, int y)? _hoveredCell;
     private double _tooltipX, _tooltipY;
 
     [Parameter, EditorRequired] public WorldState World { get; set; } = default!;
     [Parameter, EditorRequired] public Dictionary<string, string> AgentColors { get; set; } = default!;
+    [Parameter] public string? CurrentAgent { get; set; }
     [Parameter] public EventCallback<string> OnAgentClicked { get; set; }
 
+    private record BuildingData(
+        string Label, double Cx, double Cy, int Floors,
+        double Ox, double Oy, double Ow, double Oh,
+        TerrainType Terrain);
+
     private WorldState? _lastWorld;
-    private List<(string Label, double Cx, double Cy, int Floors)> _buildingLabels = [];
+    private List<BuildingData> _buildings = [];
+    private ElementReference _scrollContainer;
+    private string? _prevCurrentAgent;
+    private bool _pendingCenter;
 
     // Five distinct shapes, all centered at (0,0), radius ~7.5px
     private static readonly string[] ShapePoints =
@@ -388,13 +453,38 @@
         if (World != _lastWorld)
         {
             _lastWorld = World;
-            _buildingLabels = ComputeBuildingLabels();
+            _buildings = ComputeBuildings();
+        }
+
+        // New agent starting their turn → zoom to max and flag for centering
+        if (CurrentAgent != null && CurrentAgent != _prevCurrentAgent)
+        {
+            _cellSize = _zoomLevels[^1];
+            _buildings = ComputeBuildings();
+            _pendingCenter = true;
+        }
+        _prevCurrentAgent = CurrentAgent;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_pendingCenter && CurrentAgent != null)
+        {
+            _pendingCenter = false;
+            var (ax, ay) = World.GetAgentPosition(CurrentAgent);
+            if (ax >= 0)
+            {
+                double px = ax * _cellSize + _cellSize / 2.0;
+                double py = ay * _cellSize + _cellSize / 2.0;
+                try { await JS.InvokeVoidAsync("centerMapOnAgent", _scrollContainer, px, py); }
+                catch { /* component may not be mounted yet */ }
+            }
         }
     }
 
-    private List<(string Label, double Cx, double Cy, int Floors)> ComputeBuildingLabels()
+    private List<BuildingData> ComputeBuildings()
     {
-        var groups = new Dictionary<string, (int minX, int maxX, int minY, int maxY, int floors)>();
+        var groups = new Dictionary<string, (int minX, int maxX, int minY, int maxY, int floors, TerrainType terrain)>();
         for (int row = 0; row < World.MapHeight; row++)
         {
             for (int col = 0; col < World.MapWidth; col++)
@@ -404,17 +494,21 @@
                 if (name is null) continue;
                 if (groups.TryGetValue(name, out var b))
                     groups[name] = (Math.Min(b.minX, col), Math.Max(b.maxX, col),
-                                    Math.Min(b.minY, row), Math.Max(b.maxY, row), b.floors);
+                                    Math.Min(b.minY, row), Math.Max(b.maxY, row), b.floors, b.terrain);
                 else
-                    groups[name] = (col, col, row, row, cell.Floors);
+                    groups[name] = (col, col, row, row, cell.Floors, cell.Terrain);
             }
         }
-        var result = new List<(string Label, double Cx, double Cy, int Floors)>(groups.Count);
+        var result = new List<BuildingData>(groups.Count);
         foreach (var (name, b) in groups)
         {
-            double cx = ((b.minX + b.maxX) / 2.0 + 0.5) * _cellSize;
-            double cy = ((b.minY + b.maxY) / 2.0 + 0.5) * _cellSize;
-            result.Add((AbbreviateName(name), cx, cy, b.floors));
+            double cx  = ((b.minX + b.maxX) / 2.0 + 0.5) * _cellSize;
+            double cy  = ((b.minY + b.maxY) / 2.0 + 0.5) * _cellSize;
+            double ox  = b.minX * _cellSize;
+            double oy  = b.minY * _cellSize;
+            double ow  = (b.maxX - b.minX + 1) * _cellSize;
+            double oh  = (b.maxY - b.minY + 1) * _cellSize;
+            result.Add(new BuildingData(AbbreviateName(name), cx, cy, b.floors, ox, oy, ow, oh, b.terrain));
         }
         return result;
     }
@@ -434,14 +528,46 @@
     private void ZoomOut()
     {
         int idx = Array.IndexOf(_zoomLevels, _cellSize);
-        if (idx > 0) { _cellSize = _zoomLevels[idx - 1]; _buildingLabels = ComputeBuildingLabels(); StateHasChanged(); }
+        if (idx > 0) { _cellSize = _zoomLevels[idx - 1]; _buildings = ComputeBuildings(); StateHasChanged(); }
     }
 
     private void ZoomIn()
     {
         int idx = Array.IndexOf(_zoomLevels, _cellSize);
-        if (idx < _zoomLevels.Length - 1) { _cellSize = _zoomLevels[idx + 1]; _buildingLabels = ComputeBuildingLabels(); StateHasChanged(); }
+        if (idx < _zoomLevels.Length - 1) { _cellSize = _zoomLevels[idx + 1]; _buildings = ComputeBuildings(); StateHasChanged(); }
     }
+
+    private static string BuildingOutlineColor(TerrainType t) => t switch
+    {
+        TerrainType.Apartment  => "#5a3a25",
+        TerrainType.Storefront => "#1e4a72",
+        TerrainType.Industrial => "#5a4515",
+        TerrainType.Park       => "#2a5a32",
+        TerrainType.Forest     => "#2a5a32",
+        TerrainType.River      => "#0d3a60",
+        _                      => "#2a2a3a",
+    };
+
+    private static string HealthRingColor(float hunger, float thirst)
+    {
+        float min = Math.Min(hunger, thirst);
+        return min <= 20f ? "#ef4444" : min <= 40f ? "#f59e0b" : "#22c55e";
+    }
+
+    private static string AnimalGlyph(AnimalType t) => t switch
+    {
+        AnimalType.Rat        => "🐀",
+        AnimalType.Pigeon     => "🐦",
+        AnimalType.StreetCat  => "🐱",
+        AnimalType.Squirrel   => "🐿",
+        AnimalType.Fox        => "🦊",
+        AnimalType.DogPack    => "🐕",
+        AnimalType.Rottweiler => "🦮",
+        AnimalType.PitBull    => "🐶",
+        AnimalType.Coyote     => "🐺",
+        AnimalType.Deer       => "🦌",
+        _                     => "·",
+    };
 
     private static string TerrainFill(TerrainType terrain) => terrain switch
     {

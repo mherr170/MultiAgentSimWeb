@@ -63,4 +63,38 @@ public class AgentAction
     // Guid string of the target animal (from ANIMALS IN YOUR CELL / ANIMALS NEARBY in context)
     [JsonPropertyName("animal_target_id")]
     public string AnimalTargetId { get; set; } = "";
+
+    // true to attempt fishing (only effective at River terrain while holding a Fishing Hook)
+    [JsonPropertyName("fish")]
+    public bool Fish { get; set; }
+
+    // InstanceId of a raw/cookable item in inventory to cook (requires Fire Steel or Camping Stove in inventory)
+    [JsonPropertyName("cook")]
+    public string Cook { get; set; } = "";
+
+    // Group formation: non-empty name proposes a group with the addressed agent (address_agent must also be set).
+    // If already in a group, invites address_agent to join it (group_name is ignored in that case).
+    [JsonPropertyName("group_propose")]
+    public string GroupPropose { get; set; } = "";
+
+    // Set true to accept a pending group invite shown in context.
+    [JsonPropertyName("accept_group_invite")]
+    public bool AcceptGroupInvite { get; set; }
+
+    // Set true to leave your current group.
+    [JsonPropertyName("leave_group")]
+    public bool LeaveGroup { get; set; }
+
+    // Set a group waypoint at your current location with this label (e.g. "hospital entrance").
+    // Leave empty to not change the waypoint.
+    [JsonPropertyName("group_set_waypoint")]
+    public string GroupSetWaypoint { get; set; } = "";
+
+    // Propose a group vote with this question (e.g. "Should we move to the hospital?").
+    [JsonPropertyName("group_vote_propose")]
+    public string GroupVotePropose { get; set; } = "";
+
+    // Cast your vote on the active group vote — "yes" or "no" (or a custom option shown in context).
+    [JsonPropertyName("group_vote")]
+    public string GroupVote { get; set; } = "";
 }

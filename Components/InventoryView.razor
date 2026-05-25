@@ -29,6 +29,7 @@
         var onGround  = ax >= 0 ? World.GetItemsAt(ax, ay) : (IReadOnlyList<ItemInstance>)[];
         var hunger    = World.GetHunger(agentName);
         var thirst    = World.GetThirst(agentName);
+        var stamina   = World.GetStamina(agentName);
         var mood      = World.GetMood(agentName);
 
         float moodBarWidth    = Math.Abs(mood.Mood);
@@ -63,6 +64,13 @@
                         <div class="inv-meter-fill thirst" style="width: @(thirst)%"></div>
                     </div>
                     <span class="inv-meter-value">@thirst.ToString("F0")</span>
+                </div>
+                <div class="inv-meter-row">
+                    <span class="inv-meter-label">Stamina</span>
+                    <div class="inv-meter-bar">
+                        <div class="inv-meter-fill stamina" style="width: @(stamina)%"></div>
+                    </div>
+                    <span class="inv-meter-value">@stamina.ToString("F0")</span>
                 </div>
                 <div class="inv-meter-row">
                     <span class="inv-meter-label">Mood</span>
@@ -141,11 +149,21 @@
     [Parameter] public EventCallback<string> OnAgentClicked { get; set; }
 
     private string? _selectedAgent;
+    private string? _lastCurrentAgent;
     private readonly Dictionary<string, bool> _attitudesCollapsed = new();
+
+    protected override void OnParametersSet()
+    {
+        // Remember the last agent that was actively taking a turn so we don't flash
+        // back to the first agent in the brief gap between one agent finishing and
+        // the next one starting.
+        if (CurrentAgent != null && AgentColors.ContainsKey(CurrentAgent))
+            _lastCurrentAgent = CurrentAgent;
+    }
 
     // CurrentAgent (the agent actively taking their turn) always wins so the card
     // follows the simulation automatically. Falls back to the last manual selection,
-    // then to whichever agent is first in the list.
+    // then to the last agent that was active, and only as a last resort the first.
     private string? ActiveAgent
     {
         get
@@ -154,6 +172,8 @@
                 return CurrentAgent;
             if (_selectedAgent != null && AgentColors.ContainsKey(_selectedAgent))
                 return _selectedAgent;
+            if (_lastCurrentAgent != null && AgentColors.ContainsKey(_lastCurrentAgent))
+                return _lastCurrentAgent;
             return AgentColors.Keys.FirstOrDefault();
         }
     }

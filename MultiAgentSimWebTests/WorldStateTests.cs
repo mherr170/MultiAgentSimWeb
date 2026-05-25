@@ -753,8 +753,9 @@ public class WorldStateTests
     public void AddEvent_SelfIntroduction_NearbyAgentLearnsName()
     {
         var world = MakeWorld();
-        world.InitializeAgent("Alice", 10, 10);
-        world.InitializeAgent("Bob",   11, 10); // 1 cell away, within radius
+        // Use outdoor (street) cells so radius-1 proximity applies
+        world.InitializeAgent("Alice", 0, 0);
+        world.InitializeAgent("Bob",   1, 0); // 1 cell away on street
 
         Assert.False(world.KnowsName("Bob", "Alice"));
         world.AddEvent("Alice", new MultiAgentSimWeb.Models.AgentAction { Speech = "Hi, I'm Alice, nice to meet you." });
@@ -765,8 +766,8 @@ public class WorldStateTests
     public void AddEvent_SpeechWithoutName_DoesNotRevealName()
     {
         var world = MakeWorld();
-        world.InitializeAgent("Alice", 10, 10);
-        world.InitializeAgent("Bob",   11, 10);
+        world.InitializeAgent("Alice", 0, 0);
+        world.InitializeAgent("Bob",   1, 0); // within earshot
 
         world.AddEvent("Alice", new MultiAgentSimWeb.Models.AgentAction { Speech = "Is anyone out there?" });
         Assert.False(world.KnowsName("Bob", "Alice"));
@@ -776,8 +777,8 @@ public class WorldStateTests
     public void AddEvent_Introduction_TooFarAway_DoesNotLearnName()
     {
         var world = MakeWorld();
-        world.InitializeAgent("Alice", 10, 10);
-        world.InitializeAgent("Bob",   20, 20); // out of range
+        world.InitializeAgent("Alice", 0, 0);
+        world.InitializeAgent("Bob",   9, 9); // 9 cells away, out of range
 
         world.AddEvent("Alice", new MultiAgentSimWeb.Models.AgentAction { Speech = "I'm Alice!" });
         Assert.False(world.KnowsName("Bob", "Alice"));

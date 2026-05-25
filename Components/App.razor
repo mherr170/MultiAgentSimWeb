@@ -11,9 +11,14 @@
 <body>
     <Routes />
     <script>
-        window.scrollToBottom = (el) => { if (el) el.scrollTop = el.scrollHeight; };
-        window.scrollToTop    = (el) => { if (el) el.scrollTop = 0; };
-        window.scrollToRight  = (el) => { if (el) el.scrollLeft = el.scrollWidth; };
+        window.scrollToBottom    = (el) => { if (el) el.scrollTop = el.scrollHeight; };
+        window.scrollToTop       = (el) => { if (el) el.scrollTop = 0; };
+        window.scrollToRight     = (el) => { if (el) el.scrollLeft = el.scrollWidth; };
+        window.centerMapOnAgent  = (el, px, py) => {
+            if (!el) return;
+            el.scrollLeft = px - el.clientWidth  / 2;
+            el.scrollTop  = py - el.clientHeight / 2;
+        };
     </script>
     <script src="_framework/blazor.server.js"></script>
 </body>

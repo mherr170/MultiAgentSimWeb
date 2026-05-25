@@ -19,6 +19,15 @@ public class WorldState
     // states it in speech nearby (self-introduction).
     private readonly Dictionary<string, HashSet<string>> _knownNames = new();
 
+    // Established romantic partnerships — stored as canonical (lesser, greater) string pairs.
+    private readonly HashSet<(string, string)> _romances = new();
+
+    // Personality profiles — set before the simulation loop begins.
+    private readonly Dictionary<string, PersonalityProfile> _personalities = new();
+
+    // Group system — shared across all agents.
+    public IGroupSystem Groups { get; } = new GroupSystem();
+
     public ISurvivalSystem      Survival      { get; }
     public IMoodSystem          Mood          { get; }
     public IMemorySystem        Memory        { get; }
@@ -28,6 +37,11 @@ public class WorldState
     public IAnimalSystem        Animals       { get; }
     public ICraftingSystem      Crafting      { get; }
     public IPresenceSystem      Presence      { get; }
+    public IDayNightSystem      DayNight      { get; }
+    public IWeatherSystem       Weather       { get; }
+
+    public DayPhase CurrentPhase => DayNight.GetPhase(CurrentRound);
+    public bool     IsNight      => DayNight.IsNight(CurrentRound);
 
     public int      MapWidth     => _map.Width;
     public int      MapHeight    => _map.Height;
@@ -59,7 +73,9 @@ public class WorldState
         ICommunicationSystem communication,
         IAnimalSystem        animals,
         ICraftingSystem      crafting,
-        IPresenceSystem      presence)
+        IPresenceSystem      presence,
+        IDayNightSystem?     dayNight = null,
+        IWeatherSystem?      weather  = null)
     {
         Situation     = situation;
         _map          = map;
@@ -72,6 +88,8 @@ public class WorldState
         Animals       = animals;
         Crafting      = crafting;
         Presence      = presence;
+        DayNight      = dayNight ?? new DayNightSystem();
+        Weather       = weather  ?? new WeatherSystem();
 
         Survival.Attach(this);
         Mood.Attach(this);
@@ -82,6 +100,9 @@ public class WorldState
         Animals.Attach(this);
         Crafting.Attach(this);
         Presence.Attach(this);
+        DayNight.Attach(this);
+        Weather.Attach(this);
+        Groups.Attach(this);
     }
 
     /// Convenience constructor with default system implementations.
@@ -105,6 +126,9 @@ public class WorldState
         _agentLocations[agentName] = (x, y);
         _agentFloors[agentName] = 1;
         _agentTrails[agentName] = new Queue<(int, int)>();
+        // Pre-register MaxHealth from personality profile (profile must be set before this call)
+        float maxHp = GetPersonality(agentName).MaxHealth;
+        Survival.InitializeAgentHealth(agentName, maxHp);
         Survival.InitializeAgent(agentName);
         Mood.InitializeAgent(agentName);
         Memory.InitializeAgent(agentName);
@@ -170,9 +194,14 @@ public class WorldState
             if (Mood.Has(name))
             {
                 var m = Mood.GetMood(name);
-                m.AdjustMood(-20f);
-                m.AdjustStress(+15f);
-                _devLog.Add($"[{name}] witnessed death of {agentName} → mood -20  stress +15");
+                bool romantic = AreRomantic(name, agentName);
+                bool protects = GetPersonality(name).HasFlag("protects_others");
+                float moodHit   = romantic ? -50f : (protects ? -28f : -20f);
+                float stressHit = romantic ? +35f : (protects ? +22f : +15f);
+                m.AdjustMood(moodHit);
+                m.AdjustStress(stressHit);
+                string tag = romantic ? "  [romantic partner]" : (protects ? "  [protects_others]" : "");
+                _devLog.Add($"[{name}] witnessed death of {agentName} → mood {moodHit:+0;-0}  stress {stressHit:+0}{tag}");
             }
             Memory.AddMemory(name, $"Witnessed {DescribeAgent(name, agentName)} die of {deathCause} nearby.");
         }
@@ -192,13 +221,115 @@ public class WorldState
     }
 
     public void TickPresence(string agentName) => Presence.TickPresence(agentName);
+    public void TickDayNight(string agentName) => DayNight.TickAgentNight(agentName);
+
+    /// Advances weather state once per round (call before any agent turns).
+    public void TickWeather() => Weather.TickWeather();
+
+    /// Applies per-turn outdoor warmth drain from current weather to a single agent.
+    public void TickWeatherEffects(string agentName)
+    {
+        float drain = Weather.OutdoorWarmthDrain;
+        if (drain <= 0f) return;
+
+        if (!_agentLocations.TryGetValue(agentName, out var pos)) return;
+        bool indoors = DayNightSystem.IsIndoors(GetCell(pos.x, pos.y).Terrain);
+        if (indoors) return;
+
+        Survival.AddHunger(agentName, -drain);
+        LogDev($"[{agentName}] weather ({Weather.Label}) outdoors → hunger -{drain:F1}");
+    }
+
+    /// Fires the dawn boost for all living agents if this round crosses Night→Dawn.
+    public void TickDawnBoost()
+    {
+        if (!DayNight.TryFireDawnBoost(CurrentRound)) return;
+
+        foreach (var agentName in AgentNames)
+        {
+            if (Mood.Has(agentName))
+            {
+                var m = Mood.GetMood(agentName);
+                m.AdjustMood(+8f);
+                m.AdjustStress(-5f);
+                LogDev($"[{agentName}] dawn break → mood +8  stress -5");
+            }
+            Memory.AddMemory(agentName, "The sky began to lighten. The worst of the night is over.");
+            // Log the dawn announcement at each living agent's position so it reaches the event stream.
+            var pos = GetAgentPosition(agentName);
+            if (pos.x >= 0) LogAt(pos.x, pos.y, "Dawn: the first light of morning creeps across the city.");
+        }
+    }
+
+    // ── Personality ──────────────────────────────────────────────────────────
+
+    public void SetPersonality(string agentName, PersonalityProfile profile) =>
+        _personalities[agentName] = profile;
+
+    public PersonalityProfile GetPersonality(string agentName) =>
+        _personalities.TryGetValue(agentName, out var p) ? p : PersonalityProfile.Default;
+
+    // ── Romance ──────────────────────────────────────────────────────────────
+
+    /// Canonical key so (A,B) and (B,A) map to the same slot.
+    private static (string, string) RomancePair(string a, string b) =>
+        string.Compare(a, b, StringComparison.Ordinal) <= 0 ? (a, b) : (b, a);
+
+    public bool AreRomantic(string a, string b) =>
+        _romances.Contains(RomancePair(a, b));
+
+    /// Forms a romance between a and b if both agents have the open_to_romance flag,
+    /// both trust each other at ≥ 85, and no romance already exists.
+    public void TryFormRomance(string a, string b)
+    {
+        var pair = RomancePair(a, b);
+        if (_romances.Contains(pair)) return;
+        if (!GetPersonality(a).IsOpenToRomance) return;
+        if (!GetPersonality(b).IsOpenToRomance) return;
+
+        float trustAtoB = Mood.Has(a) ? Mood.GetMood(a).GetTrust(b) : 0f;
+        float trustBtoA = Mood.Has(b) ? Mood.GetMood(b).GetTrust(a) : 0f;
+        if (trustAtoB < 85f || trustBtoA < 85f) return;
+
+        _romances.Add(pair);
+
+        // Mutual emotional lift when the bond forms
+        if (Mood.Has(a)) { var m = Mood.GetMood(a); m.AdjustMood(+12f); m.AdjustStress(-8f); }
+        if (Mood.Has(b)) { var m = Mood.GetMood(b); m.AdjustMood(+12f); m.AdjustStress(-8f); }
+
+        var posA = GetAgentPosition(a);
+        var posB = GetAgentPosition(b);
+        string notice = $"{a} and {b} have grown deeply close. Something has changed between them.";
+        if (posA.x >= 0) LogAt(posA.x, posA.y, notice);
+        if (posB.x >= 0 && posB != posA) LogAt(posB.x, posB.y, notice);
+        Memory.AddMemory(a, $"Something shifted between you and {b}. You can't quite name it, but it's real.");
+        Memory.AddMemory(b, $"Something shifted between you and {a}. You can't quite name it, but it's real.");
+        LogDev($"[romance formed] {a} ↔ {b}  (trust A→B:{trustAtoB:F0}  B→A:{trustBtoA:F0})");
+    }
 
     // ── Forwarders (back-compat) ─────────────────────────────────────────────
 
     public float GetHunger(string agentName) => Survival.GetHunger(agentName);
     public float GetThirst(string agentName) => Survival.GetThirst(agentName);
+    public float GetHealth(string agentName)    => Survival.GetHealth(agentName);
+    public float GetMaxHealth(string agentName) => Survival.GetMaxHealth(agentName);
+    public void  AddHealth(string agentName, float delta) => Survival.AddHealth(agentName, delta);
     public bool  TickMeters(string agentName) => Survival.TickMeters(agentName);
     public bool  IsDead(string agentName) => Survival.IsDead(agentName);
+    public float GetStamina(string agentName)  => Survival.GetStamina(agentName);
+    public bool  IsExhausted(string agentName) => Survival.IsExhausted(agentName);
+    public void  RecordActivity(string agentName, bool wasActive) => Survival.RecordActivity(agentName, wasActive);
+    public int   GetIdleTurns(string agentName) => Survival.GetIdleTurns(agentName);
+
+    public void TickStamina(string agentName)
+    {
+        var pos = GetAgentPosition(agentName);
+        if (pos.x < 0) return;
+        bool isStationary    = Presence.IsStationary(agentName);
+        bool isIndoors       = DayNightSystem.IsIndoors(GetCell(pos.x, pos.y).Terrain);
+        bool isRestingIndoors = isStationary && isIndoors && IsNight;
+        Survival.TickStamina(agentName, isStationary, isRestingIndoors);
+    }
 
     public string? TryForage(string agentName) => Foraging.TryForage(agentName);
 
@@ -239,6 +370,7 @@ public class WorldState
     private const string FountainName      = "Riverside Fountain";
     private const float MoveHungerCost    = 0.5f;  // hunger lost per cell walked
     private const float MoveThirstCost    = 1.0f;  // thirst lost per cell walked (exertion dehydrates faster)
+    private const float MoveFatigueCost   = 2.5f;  // stamina lost per cell walked (was 5 — too aggressive)
 
     /// Returns true if the agent can currently use tap water at their location.
     /// Sets failReason to a user-facing message when false.
@@ -312,6 +444,8 @@ public class WorldState
     /// Fills a container item with water (tap, fountain, or river).
     public string? TryFillContainer(string agentName, string instanceIdStr)
     {
+        if (!_agentLocations.TryGetValue(agentName, out _))
+            return "agent not found";
         bool tapOk      = TapIsAvailable(agentName, out _);
         bool fountainOk = FountainIsAvailable(agentName, out _);
         bool riverOk    = RiverIsAvailable(agentName, out _);
@@ -319,6 +453,105 @@ public class WorldState
             return "no water source here — fill at an apartment tap, the Riverside Fountain, or the Irongate River";
         return Items.TryFill(agentName, instanceIdStr);
     }
+
+    private static readonly HashSet<string> CookingTools = ["fire_steel", "camping_stove"];
+
+    public string? TryFish(string agentName)
+    {
+        if (!_agentLocations.TryGetValue(agentName, out var pos)) return "agent not found";
+        if (_map.GetCell(pos.x, pos.y).Terrain != TerrainType.River)
+            return "must be at the river to fish";
+
+        var hook = Items.GetInventory(agentName)
+            .FirstOrDefault(i => i.DefinitionId == "fishing_hook" && i.UsesRemaining > 0);
+        if (hook == null)
+            return "need a Fishing Hook in your inventory to fish here";
+
+        Items.ConsumeOneUse(agentName, hook.InstanceId.ToString());
+
+        var rng = new Random();
+        if (rng.NextDouble() > 0.65)
+        {
+            LogAt(pos.x, pos.y, $"{agentName} casts a line but catches nothing this time.");
+            return "fishes — no catch";
+        }
+
+        bool added = Items.TryAddItemInstance(agentName, new ItemInstance("raw_river_fish"));
+        if (!added) Items.PlaceItemAt("raw_river_fish", pos.x, pos.y);
+        string dest = added ? "inventory" : "ground";
+        LogAt(pos.x, pos.y, $"{agentName} catches a raw river fish! (placed in {dest})");
+        if (Mood.Has(agentName)) { var m = Mood.GetMood(agentName); m.AdjustMood(+6f); m.AdjustStress(-5f); }
+        LogDev($"[{agentName}] fish → caught raw_river_fish  mood +6  stress -5");
+        Memory.AddMemory(agentName, $"Caught a raw river fish at ({pos.x},{pos.y}).");
+        return "fishes — catches a raw river fish";
+    }
+
+    public string? TryCook(string agentName, string instanceIdStr)
+    {
+        if (!_agentLocations.TryGetValue(agentName, out var pos)) return "agent not found";
+
+        var inventory = Items.GetInventory(agentName);
+        var tool = inventory.FirstOrDefault(i => CookingTools.Contains(i.DefinitionId));
+        if (tool == null)
+            return "need a Fire Steel or Camping Stove in your inventory to cook";
+
+        var target = inventory.FirstOrDefault(i =>
+            string.Equals(i.InstanceId.ToString(), instanceIdStr, StringComparison.OrdinalIgnoreCase));
+        if (target == null)
+            return $"item {instanceIdStr} not found in inventory";
+
+        var def = target.Definition;
+        if (!def.IsCookable || string.IsNullOrEmpty(def.CookResult))
+            return $"{def.Name} cannot be cooked";
+
+        Items.TryConsume(agentName, target.InstanceId.ToString());
+        bool added = Items.TryAddItemInstance(agentName, new ItemInstance(def.CookResult));
+        if (!added) Items.PlaceItemAt(def.CookResult, pos.x, pos.y);
+        var resultDef = ItemRegistry.Get(def.CookResult);
+        string dest = added ? "inventory" : "ground";
+
+        // Both fire_steel (50 uses) and camping_stove (10 uses) deplete on each cook.
+        Items.ConsumeOneUse(agentName, tool.InstanceId.ToString());
+
+        LogAt(pos.x, pos.y, $"{agentName} cooks {def.Name} → {resultDef.Name} (placed in {dest}).");
+        if (Mood.Has(agentName)) { var m = Mood.GetMood(agentName); m.AdjustMood(+5f); m.AdjustStress(-3f); }
+        LogDev($"[{agentName}] cook {def.Id} → {def.CookResult}  mood +5  stress -3");
+        Memory.AddMemory(agentName, $"Cooked {def.Name} at ({pos.x},{pos.y}).");
+        return $"cooks {def.Name} → {resultDef.Name}";
+    }
+
+    public string? TryPurify(string agentName, string instanceIdStr)
+    {
+        if (!_agentLocations.TryGetValue(agentName, out var pos)) return "agent not found";
+
+        var inventory = Items.GetInventory(agentName);
+        var tablet = inventory.FirstOrDefault(i =>
+            i.DefinitionId == "purification_tablet" && i.UsesRemaining > 0);
+        if (tablet == null)
+            return "need a Purification Tablet with charges in your inventory to purify water";
+
+        var target = inventory.FirstOrDefault(i =>
+            string.Equals(i.InstanceId.ToString(), instanceIdStr, StringComparison.OrdinalIgnoreCase));
+        if (target == null)
+            return $"item {instanceIdStr} not found in inventory";
+
+        var def = target.Definition;
+        if (string.IsNullOrEmpty(def.PurifyResult))
+            return $"{def.Name} cannot be purified — fill a container first, then purify it";
+
+        Items.ConsumeOneUse(agentName, tablet.InstanceId.ToString());
+        Items.TryConsume(agentName, target.InstanceId.ToString());
+        bool added2 = Items.TryAddItemInstance(agentName, new ItemInstance(def.PurifyResult));
+        if (!added2) Items.PlaceItemAt(def.PurifyResult, pos.x, pos.y);
+        var resultDef2 = ItemRegistry.Get(def.PurifyResult);
+        string dest2 = added2 ? "inventory" : "ground";
+
+        LogAt(pos.x, pos.y, $"{agentName} purifies water → {resultDef2.Name} (placed in {dest2}).");
+        LogDev($"[{agentName}] purify {def.Id} → {def.PurifyResult}");
+        Memory.AddMemory(agentName, $"Purified water at ({pos.x},{pos.y}).");
+        return $"purifies water → {resultDef2.Name}";
+    }
+
     public IReadOnlyList<ItemInstance> GetPlacedTrapsAt(int x, int y)      => Items.GetPlacedTrapsAt(x, y);
 
     public IReadOnlyList<SimEvent> DrainAnimalEvents() => Animals.DrainEvents();
@@ -390,11 +623,24 @@ public class WorldState
 
                 if (Mood.Has(name))
                 {
+                    // Scale mood/trust gain from speech by the listener's Sociability.
+                    // Very social listeners (+) respond warmly; introverts (−) barely register it.
+                    var listenerPersonality = GetPersonality(name);
+                    float socFactor = listenerPersonality.Sociability / 50f; // 0→0, 50→1, 100→2
+                    // People Reader: trust and mood gains from hearing speech are 50% more effective.
+                    float readerMult = listenerPersonality.IsPeopleReader ? 1.5f : 1.0f;
+                    // distrusts_strangers: barely extends trust to people they don't know yet.
+                    float distrustsMultiplier = (listenerPersonality.HasFlag("distrusts_strangers") && !KnowsName(name, agentName)) ? 0.25f : 1.0f;
+                    float moodGain  = Math.Max(0f, 2f * socFactor * readerMult);
+                    float stressRel = Math.Max(0f, 1f * socFactor * readerMult);
+                    float trustGain = 3f * socFactor * readerMult * distrustsMultiplier;
                     var listenerMood = Mood.GetMood(name);
-                    listenerMood.AdjustMood(+2f);
-                    listenerMood.AdjustStress(-1f);
-                    listenerMood.AdjustTrust(agentName, +3f);
-                    _devLog.Add($"[{name}] heard {agentName} → mood +2  stress -1  trust[{agentName}] +3");
+                    listenerMood.AdjustMood(moodGain);
+                    listenerMood.AdjustStress(-stressRel);
+                    listenerMood.AdjustTrust(agentName, trustGain);
+                    string readerNote    = readerMult > 1          ? "  [people reader]"      : "";
+                    string distrustNote = distrustsMultiplier < 1f ? "  [distrusts strangers]" : "";
+                    _devLog.Add($"[{name}] heard {agentName} → mood +{moodGain:F1}  stress -{stressRel:F1}  trust[{agentName}] +{trustGain:F1}  (soc={listenerPersonality.Sociability}){readerNote}{distrustNote}");
                 }
 
                 var speakerLabel = DescribeAgent(name, agentName);
@@ -449,10 +695,38 @@ public class WorldState
         // Moving costs energy — small penalty on top of the per-turn decay.
         Survival.AddHunger(agentName, -MoveHungerCost);
         Survival.AddThirst(agentName, -MoveThirstCost);
-        LogDev($"[{agentName}] moved → hunger -{MoveHungerCost}  thirst -{MoveThirstCost}");
+        Survival.DrainStamina(agentName, MoveFatigueCost);
+        LogDev($"[{agentName}] moved → hunger -{MoveHungerCost}  thirst -{MoveThirstCost}  stamina -{MoveFatigueCost}");
 
         return true;
     }
+
+    /// Returns agents within earshot of <paramref name="agentName"/>, excluding self.
+    /// Outdoors (street, park, forest, river): anyone within 1 cell.
+    /// Indoors (apartment, storefront, industrial): same cell AND same floor only.
+    public IReadOnlyList<(string name, int x, int y)> GetVisibleAgents(string agentName)
+    {
+        if (!_agentLocations.TryGetValue(agentName, out var pos)) return Array.Empty<(string, int, int)>();
+        var cell = _map.GetCell(pos.x, pos.y);
+        bool isIndoor = cell.Terrain is TerrainType.Apartment or TerrainType.Storefront or TerrainType.Industrial;
+        if (isIndoor)
+        {
+            int myFloor = GetAgentFloor(agentName);
+            return _agentLocations
+                .Where(kv => kv.Key != agentName && kv.Value == pos && GetAgentFloor(kv.Key) == myFloor)
+                .Select(kv => (kv.Key, kv.Value.x, kv.Value.y))
+                .ToList();
+        }
+        // Wind storm / thunderstorm: outdoor voices can only be heard in the same cell.
+        int radius = Weather.ReducesSpeechRange ? 0 : 1;
+        return GetAgentsInRadius(pos.x, pos.y, radius).Where(a => a.name != agentName).ToList();
+    }
+
+    public string? TryDepositToGroupStash(string agentName, string instanceIdStr)
+        => Groups.TryDeposit(agentName, instanceIdStr);
+
+    public string? TryWithdrawFromGroupStash(string agentName, string instanceIdStr)
+        => Groups.TryWithdraw(agentName, instanceIdStr);
 
     // ── Context generation ───────────────────────────────────────────────────
 
@@ -464,15 +738,101 @@ public class WorldState
         var (cx, cy) = pos;
         var cell = _map.GetCell(cx, cy);
         var sb = new StringBuilder();
+        var inv = Items.GetInventory(agentName);
 
         sb.AppendLine($"SITUATION:\n{Situation}");
         sb.AppendLine();
         sb.AppendLine($"TIME: {CurrentTime} (approximately {CurrentRound} hour{(CurrentRound == 1 ? "" : "s")} since the blackout)");
+
+        // Day/Night context block
+        var phase = CurrentPhase;
+        string phaseLabel = phase switch
+        {
+            DayPhase.Night => "Night",
+            DayPhase.Dawn  => "Dawn",
+            DayPhase.Day   => "Day",
+            DayPhase.Dusk  => "Dusk",
+            _              => ""
+        };
+        sb.AppendLine($"DAY PHASE: {phaseLabel}");
+
+        if (phase == DayPhase.Night)
+        {
+            var nightPos = GetAgentPosition(agentName);
+            bool nightIndoors = nightPos.x >= 0 &&
+                DayNightSystem.IsIndoors(GetCell(nightPos.x, nightPos.y).Terrain);
+            if (!nightIndoors)
+            {
+                sb.AppendLine("DARKNESS: The city is pitch black. Animals are bolder tonight — large predators hunt more aggressively.");
+                bool hasWarmth = DayNight.HasWarmth(agentName);
+                if (!hasWarmth)
+                    sb.AppendLine("COLD: You have no warmth (blanket or winter coat). The cold is draining your energy — you lose extra hunger each turn.");
+                else
+                    sb.AppendLine("WARMTH: Your gear keeps out the cold.");
+                bool hasLight = DayNight.HasLightSource(agentName);
+                if (!hasLight)
+                    sb.AppendLine("LIGHT: No light source — scavenging is harder in the dark. A flashlight, candle, or lighter would help.");
+                else
+                    sb.AppendLine("LIGHT: Your light source helps you navigate — but it also makes you visible to predators at greater distance.");
+            }
+            else
+            {
+                sb.AppendLine("SHELTERED: You are indoors for the night. No cold drain.");
+                if (Presence.IsStationary(agentName))
+                    sb.AppendLine("REST: You are resting — staying still indoors tonight slowly restores health and reduces stress (+2 health, -5 stress per turn).");
+                else
+                    sb.AppendLine("REST: Stay in one place indoors to rest and recover health and stress.");
+            }
+        }
+        else if (phase == DayPhase.Dawn)
+        {
+            sb.AppendLine("DAWN: The sky is lightening. The night's dangers are fading — the city is waking up.");
+        }
+        else if (phase == DayPhase.Day)
+        {
+            sb.AppendLine("DAYLIGHT: Full visibility. Best conditions for movement, scavenging, and exploring new areas.");
+        }
+        else if (phase == DayPhase.Dusk)
+        {
+            sb.AppendLine("DUSK: Light is fading. Animals will be bolder soon — consider finding shelter before full dark.");
+        }
+
+        sb.AppendLine(Weather.GetContextBlock(agentName));
+
         sb.AppendLine($"YOUR POSITION: ({cx}, {cy})");
         string terrainLabel = cell.BuildingName != null
             ? $"{cell.BuildingName} ({cell.DisplayName})"
             : cell.DisplayName;
         sb.AppendLine($"TERRAIN: {terrainLabel} — {cell.Description}");
+
+        // Personality context — remind the agent who they are and surface flag-driven notes
+        var personality = GetPersonality(agentName);
+        if (!string.IsNullOrWhiteSpace(personality.Blurb))
+        {
+            sb.AppendLine();
+            sb.AppendLine($"CHARACTER: {personality.Blurb}");
+            foreach (var flag in personality.Flags)
+            {
+                string? flagNote = flag switch
+                {
+                    "hoards_food"         => "NOTE (personality): You have a strong instinct to stockpile food and water rather than consume them early. Scarcity is real and you've seen what happens when supplies run out.",
+                    "distrusts_strangers" => "NOTE (personality): Your gut tells you not to trust people who haven't proven themselves. Strangers are potential threats until demonstrated otherwise.",
+                    "fears_dark"          => "NOTE (personality): The darkness and silence of the blackout are getting to you more than you'd like to admit. Being alone in the dark is difficult.",
+                    "protects_others"     => "NOTE (personality): Despite everything, you feel a pull toward protecting people who are weaker or more scared than you — even at cost to yourself.",
+                    "prone_to_panic"      => "NOTE (personality): Under extreme pressure your emotions can spiral. High stress makes you less rational and more reactive — watch for it.",
+                    "night_owl"           => "NOTE (personality): The night energises you. The dark city feels more alive to you than it should — you're more at ease out here than most.",
+                    "claustrophobic"      => "NOTE (personality): Enclosed spaces put you on edge. Staying indoors for too long builds pressure inside you that's hard to shake.",
+                    "self_reliant"        => "NOTE (personality): You're used to solving your own problems. Help offered freely makes you more uncomfortable than grateful — it implies debt.",
+                    "paranoid"            => "NOTE (personality): You struggle to fully trust people you don't know. Unknown faces nearby keep you watchful and wired regardless of whether the threat is real.",
+                    "risk_taker"          => "NOTE (personality): You've always leaned into danger rather than away from it. High-stakes moments sharpen you instead of paralyzing you.",
+                    "open_to_romance"     => "NOTE (personality): You're not closing yourself off emotionally, even now. If something real develops with someone you trust deeply, you won't run from it.",
+                    _                     => null
+                };
+                if (flagNote != null) sb.AppendLine(flagNote);
+            }
+            sb.AppendLine();
+        }
+
         if (cell.Floors > 1)
         {
             int agentFloor = GetAgentFloor(agentName);
@@ -482,26 +842,51 @@ public class WorldState
         {
             string tapNote = CurrentRound <= 36
                 ? "TAP WATER: Taps and sinks still have pressure. Set drink_tap: true to drink (+30 thirst)."
-                : "TAP WATER: Water pressure is weakening — may not last much longer. Set drink_tap: true to drink (+20 thirst).";
+                : "TAP WATER: Water pressure is weakening -- may not last much longer. Set drink_tap: true to drink (+20 thirst).";
             sb.AppendLine(tapNote);
         }
 
         if (cell.BuildingName == FountainName)
         {
-            sb.AppendLine("FOUNTAIN: A stone fountain — underground pressure keeps the water flowing. Set drink_fountain: true to drink (+20 thirst). You can also fill containers here (use item_action \"fill\").");
+            sb.AppendLine("FOUNTAIN: A stone fountain -- underground pressure keeps the water flowing. Set drink_fountain: true to drink (+20 thirst). You can also fill containers here (use item_action \"fill\").");
         }
 
         if (cell.Terrain == TerrainType.River)
         {
-            sb.AppendLine("RIVER: The Irongate River flows here — clean enough to drink. Set drink_river: true to drink (+25 thirst). You can also fill containers here (use item_action \"fill\"). The river never runs dry.");
+            sb.AppendLine("RIVER: The Irongate River flows here -- clean enough to drink. Set drink_river: true to drink (+25 thirst). You can also fill containers here (use item_action \"fill\"). The river never runs dry.");
+            bool hasFishingHook = inv.Any(i => i.DefinitionId == "fishing_hook" && i.UsesRemaining > 0);
+            if (hasFishingHook)
+                sb.AppendLine("FISHING: You have a Fishing Hook. Set fish: true to cast a line (65% catch chance). Each cast uses one hook charge. Raw fish must be cooked before eating.");
+            else
+                sb.AppendLine("FISHING: You need a Fishing Hook to fish here. Search near riverbanks to find one.");
+            bool hasPurifyTablet = inv.Any(i => i.DefinitionId == "purification_tablet" && i.UsesRemaining > 0);
+            bool hasFilledContainer = inv.Any(i => !string.IsNullOrEmpty(i.Definition.PurifyResult));
+            if (hasPurifyTablet && hasFilledContainer)
+                sb.AppendLine("PURIFY: You have a Purification Tablet and a filled container. Use item_action \"purify\" on the container's ID to produce safe stored water (+35 thirst when drunk, stores indefinitely).");
         }
 
         if (cell.Terrain == TerrainType.Forest)
         {
-            sb.AppendLine("FOREST: Dense woodland. Set scavenge: true to forage for wild berries and mushrooms. Animals are present — foxes are harmless, but deer can be hunted for meat.");
+            bool hasForagingKnife = inv.Any(i => i.DefinitionId == "foraging_knife");
+            string knifeNote = hasForagingKnife
+                ? " Your Foraging Knife grants bonus rolls for extra berries and mushrooms."
+                : " A Foraging Knife (found deeper in the forest or on hunters) would improve yields.";
+            sb.AppendLine($"FOREST: Dense woodland. Set scavenge: true to forage for wild berries and mushrooms.{knifeNote} Animals are present -- foxes are harmless, but deer can be hunted for meat.");
         }
 
-        // Shelter status
+        bool hasCookingTool = inv.Any(i => CookingTools.Contains(i.DefinitionId));
+        var cookableItems = inv.Where(i => i.Definition.IsCookable && !string.IsNullOrEmpty(i.Definition.CookResult)).ToList();
+        if (hasCookingTool && cookableItems.Count > 0)
+        {
+            sb.AppendLine("COOKING: You have a cooking tool and raw food. Use item_action \"cook\" with the raw item's ID to cook it:");
+            foreach (var ci in cookableItems)
+                sb.AppendLine($"  [{ci.InstanceId}] {ci.Definition.Name} => {ItemRegistry.Get(ci.Definition.CookResult).Name}");
+        }
+        else if (cookableItems.Count > 0)
+        {
+            sb.AppendLine("COOKING: You have raw food but no cooking tool (Fire Steel or Camping Stove needed to cook).");
+        }
+
         var shelterPos = Presence.GetShelter(agentName);
         bool hasShelter = shelterPos.x >= 0;
         bool atShelter  = hasShelter && shelterPos == pos;
@@ -514,17 +899,29 @@ public class WorldState
             var sc = _map.GetCell(shelterPos.x, shelterPos.y);
             int dist = Math.Abs(shelterPos.x - cx) + Math.Abs(shelterPos.y - cy);
             string sName = sc.BuildingName ?? sc.DisplayName;
-            sb.AppendLine($"YOUR SHELTER: {sName} ({shelterPos.x},{shelterPos.y}) — {dist} step{(dist == 1 ? "" : "s")} away. Items you left there may still be waiting.");
+            sb.AppendLine($"YOUR SHELTER: {sName} ({shelterPos.x},{shelterPos.y}) -- {dist} step{(dist == 1 ? "" : "s")} away. Items you left there may still be waiting.");
         }
 
         sb.AppendLine();
 
         float hunger = Survival.GetHunger(agentName);
         float thirst = Survival.GetThirst(agentName);
+        float health = Survival.GetHealth(agentName);
+        float maxHp  = Survival.GetMaxHealth(agentName);
+        float stamina = Survival.GetStamina(agentName);
         sb.AppendLine($"HUNGER: {hunger:F0}/100 ({Survival.HungerLabel(hunger)})");
         sb.AppendLine($"THIRST: {thirst:F0}/100 ({Survival.ThirstLabel(thirst)})");
+        sb.AppendLine($"HEALTH: {health:F0}/{maxHp:F0} ({Survival.HealthLabel(health)})");
+        sb.AppendLine($"STAMINA: {stamina:F0}/100 ({Survival.StaminaLabel(stamina)})");
         if (Survival.IsCritical(agentName))
             sb.AppendLine("WARNING: You are in danger of dying from starvation or dehydration. Find food or water NOW.");
+        if (Survival.IsHealthCritical(agentName))
+            sb.AppendLine("WARNING: You are critically injured. Find and use medical supplies (first_aid_kit, bandage_roll, antiseptic, surgical_kit) immediately.");
+        if (Survival.IsExhausted(agentName))
+            sb.AppendLine("WARNING: You are exhausted. Rest by staying indoors at night to recover stamina. Scavenging is less effective while exhausted.");
+        int idleTurns = Survival.GetIdleTurns(agentName);
+        if (idleTurns >= 3)
+            sb.AppendLine($"NOTE: You have been idle for {idleTurns} turn{(idleTurns == 1 ? "" : "s")} without purpose. Restlessness is setting in — move, scavenge, or find someone to talk to.");
         sb.AppendLine();
 
         if (Mood.Has(agentName))
@@ -532,8 +929,6 @@ public class WorldState
             var ctxMood = Mood.GetMood(agentName);
             sb.AppendLine($"EMOTIONAL STATE:");
             sb.AppendLine($"  Mood: {ctxMood.MoodLabel} ({ctxMood.Mood:+0;-0;0})  |  Stress: {ctxMood.StressLabel} ({ctxMood.Stress:F0})");
-            // Only people whose name you've learned — you have no opinion of strangers
-            // you haven't met.
             var knownPeers = _agentLocations.Keys
                 .Where(n => n != agentName && KnowsName(agentName, n))
                 .ToList();
@@ -547,7 +942,8 @@ public class WorldState
                     string mpNote = mp.Item1 >= 0
                         ? $"  [last met: {_map.GetCell(mp.Item1, mp.Item2).BuildingName ?? _map.GetCell(mp.Item1, mp.Item2).DisplayName} ({mp.Item1},{mp.Item2})]"
                         : "";
-                    sb.AppendLine($"    {peer} — {AgentMood.TrustLabel(t)} ({t:+0;-0;0}){mpNote}");
+                    string romanceNote = AreRomantic(agentName, peer) ? " [romantic partner]" : "";
+                    sb.AppendLine($"    {peer} -- {AgentMood.TrustLabel(t)} ({t:+0;-0;0}){romanceNote}{mpNote}");
                 }
             }
             sb.AppendLine("  Your emotional state is real. Let it shape your tone, choices, and how you treat others.");
@@ -587,15 +983,27 @@ public class WorldState
         }
 
         sb.AppendLine();
-        var nearby = GetAgentsInRadius(cx, cy, 1).Where(a => a.name != agentName).ToList();
+        var nearby = GetVisibleAgents(agentName);
         if (nearby.Count > 0)
         {
             sb.AppendLine("OTHERS NEARBY:");
             foreach (var (name, nx, ny) in nearby)
             {
                 int dist = Math.Max(Math.Abs(nx - cx), Math.Abs(ny - cy));
+                string distNote = dist == 0 ? "same cell" : $"{dist} cell{(dist == 1 ? "" : "s")} away";
                 var who = DescribeAgent(agentName, name);
-                sb.AppendLine($"  {who} is at ({nx},{ny}) [{dist} cell{(dist == 1 ? "" : "s")} away]");
+                string relationNote = "";
+                if (KnowsName(agentName, name) && Mood.Has(agentName))
+                {
+                    float t = Mood.GetMood(agentName).GetTrust(name);
+                    if (AreRomantic(agentName, name))
+                        relationNote = " [romantic partner]";
+                    else if (t > 70f)
+                        relationNote = " [close friend]";
+                    else if (t < -30f)
+                        relationNote = " [hostile]";
+                }
+                sb.AppendLine($"  {who} is at ({nx},{ny}) [{distNote}]{relationNote}");
             }
         }
         else
@@ -603,23 +1011,100 @@ public class WorldState
             sb.AppendLine("OTHERS NEARBY: No one nearby.");
         }
 
-        // Direct message: you can only address someone privately if you know their name.
-        // To reach a stranger, speak generally (everyone nearby hears it) and introduce yourself.
+        var agentGroup    = Groups.GetGroup(agentName);
+        var pendingInvite = Groups.GetPendingInvite(agentName);
+
+        if (agentGroup != null)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"GROUP -- \"{agentGroup.Name}\":");
+
+            var memberParts = new List<string>();
+            foreach (var m in agentGroup.Members)
+            {
+                if (m == agentName) { memberParts.Add($"{m} (you)"); continue; }
+                var mp = GetAgentPosition(m);
+                if (mp == (-1, -1)) { memberParts.Add($"{m} (dead)"); continue; }
+                int mdist = Math.Max(Math.Abs(mp.x - cx), Math.Abs(mp.y - cy));
+                string prox = mdist == 0 ? "same cell" : $"{mdist} cell{(mdist == 1 ? "" : "s")} away";
+                memberParts.Add($"{m} ({prox})");
+            }
+            sb.AppendLine($"  Members: {string.Join(", ", memberParts)}");
+
+            if (agentGroup.Waypoint is { } wp)
+            {
+                int wdist = Math.Abs(wp.x - cx) + Math.Abs(wp.y - cy);
+                var wCell = _map.GetCell(wp.x, wp.y);
+                string wName = wCell.BuildingName ?? wCell.DisplayName;
+                string wDir  = CompassDirection(cx, cy, wp.x, wp.y);
+                sb.AppendLine($"  Waypoint: \"{wp.Description}\" -- {wName} ({wp.x},{wp.y}), {wdist} step{(wdist == 1 ? "" : "s")} {wDir} (set by {wp.SetBy})");
+            }
+
+            if (agentGroup.StashLocation is { } sl)
+            {
+                var sc    = _map.GetCell(sl.x, sl.y);
+                string sn = sc.BuildingName ?? sc.DisplayName;
+                bool atStash = sl.x == cx && sl.y == cy;
+                if (atStash)
+                {
+                    sb.AppendLine($"  GROUP STASH -- you are here ({sl.x},{sl.y}) -- {agentGroup.Stash.Count} item{(agentGroup.Stash.Count == 1 ? "" : "s")}:");
+                    if (agentGroup.Stash.Count > 0)
+                        foreach (var si in agentGroup.Stash)
+                            sb.AppendLine($"    [{si.InstanceId}] {si.DisplayName} -- {si.Definition.Description}");
+                    else
+                        sb.AppendLine("    (empty)");
+                    sb.AppendLine("    Use item_action \"deposit\" (item_target_id = inventory item ID) to add, \"withdraw\" (item_target_id = stash item ID) to take.");
+                }
+                else
+                {
+                    int sdist = Math.Abs(sl.x - cx) + Math.Abs(sl.y - cy);
+                    string sDir = CompassDirection(cx, cy, sl.x, sl.y);
+                    sb.AppendLine($"  Group stash: {agentGroup.Stash.Count} item{(agentGroup.Stash.Count == 1 ? "" : "s")} at {sn} ({sl.x},{sl.y}) -- {sdist} step{(sdist == 1 ? "" : "s")} {sDir}");
+                }
+            }
+            else
+            {
+                sb.AppendLine("  Group stash: not established -- use item_action \"deposit\" anywhere to create it at your current cell.");
+            }
+
+            if (agentGroup.ActiveVote is { } vote)
+            {
+                sb.AppendLine();
+                int yes2    = vote.Votes.Values.Count(v => v == "yes");
+                int no2     = vote.Votes.Values.Count(v => v == "no");
+                int pending2 = agentGroup.Members.Count(m => GetAgentPosition(m) != (-1, -1)) - vote.Votes.Count;
+                sb.AppendLine($"  ACTIVE VOTE: \"{vote.Question}\" (proposed by {vote.Proposer})");
+                sb.AppendLine($"    {yes2} yes / {no2} no / {Math.Max(0, pending2)} pending");
+                if (vote.Votes.TryGetValue(agentName, out var myVote))
+                    sb.AppendLine($"    You voted: \"{myVote}\"");
+                else
+                    sb.AppendLine("    You have not voted yet -- set group_vote to \"yes\" or \"no\" this turn.");
+            }
+
+            sb.AppendLine("  (Leave group: set leave_group: true. Set meeting point: set group_set_waypoint to a short label.)");
+        }
+        else if (pendingInvite is { } invite)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"GROUP INVITE: {invite.Inviter} has invited you to join \"{invite.GroupName}\".");
+            sb.AppendLine("  Set accept_group_invite: true to join, or leave it false to decline (invite expires after this round).");
+        }
+
         sb.AppendLine();
         var knownNearby = nearby.Where(a => KnowsName(agentName, a.name)).ToList();
         if (knownNearby.Count > 0)
         {
-            sb.AppendLine("DIRECT MESSAGE — to address someone privately, copy their name exactly into address_agent:");
+            sb.AppendLine("DIRECT MESSAGE -- to address someone privately, copy their name exactly into address_agent:");
             foreach (var (name, _, _) in knownNearby)
                 sb.AppendLine($"  \"{name}\"");
         }
         else if (nearby.Count > 0)
         {
-            sb.AppendLine("DIRECT MESSAGE: You don't know anyone nearby by name yet — speak generally to be heard, and say your name to introduce yourself. Leave address_agent empty.");
+            sb.AppendLine("DIRECT MESSAGE: You don't know anyone nearby by name yet -- speak generally to be heard, and say your name to introduce yourself. Leave address_agent empty.");
         }
         else
         {
-            sb.AppendLine("DIRECT MESSAGE: No one within range — leave address_agent empty.");
+            sb.AppendLine("DIRECT MESSAGE: No one within range -- leave address_agent empty.");
         }
 
         sb.AppendLine();
@@ -633,30 +1118,29 @@ public class WorldState
         if (Foraging.CanForage(cell.Terrain))
             sb.AppendLine("SCAVENGE: Set \"scavenge\": true to search this building for supplies. Resolves at your final position AFTER any movement this turn.");
         else
-            sb.AppendLine("SCAVENGE: Not available here — must be inside an Apartment or Storefront. Move into a building first, then scavenge next turn.");
+            sb.AppendLine("SCAVENGE: Not available here -- must be inside an Apartment or Storefront. Move into a building first, then scavenge next turn.");
 
         sb.AppendLine();
-        var inv = Items.GetInventory(agentName);
         int capacity = Items.GetCarryCapacity(agentName);
         var containers = inv.Where(i => i.Definition.CarryCapacity > 0).ToList();
         string containerNote = containers.Count > 0
-            ? " — " + string.Join(", ", containers.Select(c => $"{c.Definition.Name}: +{c.Definition.CarryCapacity}"))
+            ? " -- " + string.Join(", ", containers.Select(c => $"{c.Definition.Name}: +{c.Definition.CarryCapacity}"))
             : "";
         sb.AppendLine($"YOUR INVENTORY ({inv.Count}/{capacity} slots{containerNote}):");
         if (inv.Count > 0)
             foreach (var it in inv)
-                sb.AppendLine($"  [{it.InstanceId}] {it.DisplayName} — {it.Definition.Description}");
+                sb.AppendLine($"  [{it.InstanceId}] {it.DisplayName} -- {it.Definition.Description}");
         else
             sb.AppendLine("  (empty)");
         if (Items.IsInventoryFull(agentName))
-            sb.AppendLine("  ⚠ INVENTORY FULL — drop or use an item before picking up more. Find a bag or backpack to expand capacity.");
+            sb.AppendLine("  WARNING: INVENTORY FULL -- drop or use an item before picking up more. Find a bag or backpack to expand capacity.");
 
         sb.AppendLine();
         var cellItemList = Items.GetItemsAt(cx, cy);
         sb.AppendLine("ITEMS HERE (at your position):");
         if (cellItemList.Count > 0)
             foreach (var it in cellItemList)
-                sb.AppendLine($"  [{it.InstanceId}] {it.DisplayName} — {it.Definition.Description}");
+                sb.AppendLine($"  [{it.InstanceId}] {it.DisplayName} -- {it.Definition.Description}");
         else
             sb.AppendLine("  (none)");
 
@@ -666,16 +1150,18 @@ public class WorldState
             sb.AppendLine();
             sb.AppendLine("TRAPS ARMED HERE:");
             foreach (var t in armedTraps)
-                sb.AppendLine($"  [{t.InstanceId}] {t.DisplayName} — armed and waiting");
+                sb.AppendLine($"  [{t.InstanceId}] {t.DisplayName} -- armed and waiting");
             sb.AppendLine("  (Small animals that wander here will be caught. Pick up with pick_up to retrieve.)");
         }
 
         sb.AppendLine();
-        sb.AppendLine("ITEM ACTIONS: pick_up, drop, use, give, deconstruct, craft, fill, place_trap");
+        sb.AppendLine("ITEM ACTIONS: pick_up, drop, use, give, deconstruct, craft, fill, place_trap, cook, purify");
         sb.AppendLine("  Set \"item_action\" to one of the above (or \"none\"), \"item_target_id\" to the item's ID string,");
         sb.AppendLine("  \"item_give_to\" to the recipient agent's exact name (for \"give\" only).");
         sb.AppendLine("  For \"craft\": set \"craft_recipe_id\" to the recipe ID (see CRAFTING below); item_target_id unused.");
         sb.AppendLine("  For \"place_trap\": set item_target_id to the Improved Trap's instance ID to arm it here.");
+        sb.AppendLine("  For \"cook\": set item_target_id to a raw/cookable item's ID. Requires Fire Steel or Camping Stove in inventory.");
+        sb.AppendLine("  For \"purify\": set item_target_id to a filled container's ID. Requires Purification Tablet in inventory.");
         sb.AppendLine("  You may only do one item action per turn.");
 
         var available = RecipeRegistry.GetAvailable(Items.GetInventory(agentName));
@@ -686,17 +1172,17 @@ public class WorldState
             foreach (var r in available)
             {
                 var ingNames = string.Join(" + ", r.Ingredients.Select(id => ItemRegistry.Get(id).Name));
-                sb.AppendLine($"  [{r.Id}] {r.Name} — needs: {ingNames} — {r.Description}");
+                sb.AppendLine($"  [{r.Id}] {r.Name} -- needs: {ingNames} -- {r.Description}");
             }
         }
         else
         {
-            sb.AppendLine("  (none available — collect components to unlock recipes)");
+            sb.AppendLine("  (none available -- collect components to unlock recipes)");
         }
 
         sb.AppendLine();
         sb.AppendLine("CRAFTING TIPS:");
-        sb.AppendLine("  WEAPONS: Shiv (+20 dmg) and Crude Knife (+12 dmg) boost every animal attack automatically — no equip needed.");
+        sb.AppendLine("  WEAPONS: Shiv (+20 dmg) and Crude Knife (+12 dmg) boost every animal attack automatically -- no equip needed.");
         sb.AppendLine("  TRAPS: Craft an Improved Trap, then use place_trap to arm it at your location.");
         sb.AppendLine("         It stays active after you leave. Small animals that wander onto it are caught (85% chance).");
         sb.AppendLine("         Retrieve it with pick_up. Cook carcasses with a Lighter for better hunger restore.");
@@ -708,8 +1194,8 @@ public class WorldState
         {
             foreach (var a in cellAnimals)
             {
-                string sizeTag = a.Size == AnimalSize.Large ? "[LARGE — DANGEROUS]" : "[small]";
-                sb.AppendLine($"  {sizeTag} {a.DisplayName} [id:{a.Id}] — HP:{a.Health:F0}/{a.MaxHealth:F0} — {a.Description}");
+                string sizeTag = a.Size == AnimalSize.Large ? "[LARGE -- DANGEROUS]" : "[small]";
+                sb.AppendLine($"  {sizeTag} {a.DisplayName} [id:{a.Id}] -- HP:{a.Health:F0}/{a.MaxHealth:F0} -- {a.Description}");
             }
         }
         else
@@ -731,8 +1217,8 @@ public class WorldState
                 string sizeTag = a.Size == AnimalSize.Large ? "[LARGE]" : "[small]";
                 string stateStr = a.State switch
                 {
-                    AnimalState.Hunting => " — HUNTING",
-                    AnimalState.Fleeing => " — fleeing",
+                    AnimalState.Hunting => " -- HUNTING",
+                    AnimalState.Fleeing => " -- fleeing",
                     _ => ""
                 };
                 sb.AppendLine($"  {sizeTag} {a.DisplayName} at ({a.X},{a.Y}) [{dist} cell{(dist == 1 ? "" : "s")} away]{stateStr}");
@@ -746,10 +1232,10 @@ public class WorldState
         sb.AppendLine();
         sb.AppendLine("ANIMAL ACTIONS: attack, trap, scare, none");
         sb.AppendLine("  Set \"animal_action\" to one of the above, \"animal_target_id\" to the animal's [id:...] string.");
-        sb.AppendLine("  attack — strike an animal IN YOUR CELL. Risky against large ones (they counter-attack).");
-        sb.AppendLine("  trap   — catch a SMALL animal in your cell using a Wire Bundle from your inventory.");
-        sb.AppendLine("  scare  — attempt to frighten a LARGE animal within 2 cells away. May backfire.");
-        sb.AppendLine("  none   — take no animal action (default).");
+        sb.AppendLine("  attack -- strike an animal IN YOUR CELL. Risky against large ones (they counter-attack).");
+        sb.AppendLine("  trap   -- catch a SMALL animal in your cell using a Wire Bundle from your inventory.");
+        sb.AppendLine("  scare  -- attempt to frighten a LARGE animal within 2 cells away. May backfire.");
+        sb.AppendLine("  none   -- take no animal action (default).");
         sb.AppendLine("  You may only do one animal action per turn, combined with a normal item action if desired.");
 
         sb.AppendLine();
@@ -774,7 +1260,25 @@ public class WorldState
         return sb.ToString();
     }
 
-    // ── Internal helpers ─────────────────────────────────────────────────────
+    // -- Internal helpers --------------------------------------------------------
+
+    private static string CompassDirection(int fromX, int fromY, int toX, int toY)
+    {
+        int dx = toX - fromX, dy = toY - fromY;
+        if (dx == 0 && dy == 0) return "here";
+        double deg = (Math.Atan2(dy, dx) * 180.0 / Math.PI + 360.0) % 360.0;
+        return deg switch
+        {
+            < 22.5  or >= 337.5 => "E",
+            < 67.5              => "SE",
+            < 112.5             => "S",
+            < 157.5             => "SW",
+            < 202.5             => "W",
+            < 247.5             => "NW",
+            < 292.5             => "N",
+            _                   => "NE",
+        };
+    }
 
     private List<string> GetOrCreateLog((int x, int y) pos)
     {

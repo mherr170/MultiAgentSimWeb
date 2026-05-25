@@ -29,6 +29,9 @@ public class GridCell
         _                      => "Unknown"
     };
 
+    /// True for terrain types where agents share a floor and have limited visibility.
+    public bool IsIndoor => Terrain is TerrainType.Apartment or TerrainType.Storefront or TerrainType.Industrial;
+
     public string Description => Terrain switch
     {
         TerrainType.Street     => "A dark city street. No working streetlights. Quiet but exposed.",

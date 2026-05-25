@@ -33,6 +33,12 @@ public interface IItemSystem
     /// Removes an inventory item without placing it on the ground. Returns false if not found.
     bool TryConsume(string agentName, string instanceIdStr);
 
+    /// Silently removes an item from inventory and returns it (for transferring to a stash). Returns null if not found.
+    ItemInstance? TryRemoveFromInventory(string agentName, string instanceIdStr);
+
+    /// Adds an existing ItemInstance directly into an agent's inventory. Returns false if inventory full.
+    bool TryAddItemInstance(string agentName, ItemInstance item);
+
     /// Consumes one charge of a multi-use item (or removes it entirely if single-use or last charge).
     bool ConsumeOneUse(string agentName, string instanceIdStr);
 

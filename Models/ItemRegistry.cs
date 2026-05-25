@@ -152,7 +152,7 @@ public static class ItemRegistry
             Id = "first_aid_kit", Name = "First Aid Kit",
             Description = "A standard red kit. Bandages, antiseptic wipes, pain tablets, a tourniquet.",
             IsUsable = true, UseEffect = "You clean and dress your injuries. The sting fades and your head clears.",
-            MoodDelta = 10f, StressDelta = -15f,
+            MoodDelta = 10f, StressDelta = -15f, HealthRestore = 35f,
             IsDeconstructable = false
         },
         ["painkillers"] = new ItemDefinition
@@ -160,7 +160,7 @@ public static class ItemRegistry
             Id = "painkillers", Name = "Painkillers",
             Description = "A blister pack of ibuprofen or paracetamol. Widely available, genuinely useful.",
             IsUsable = true, UseEffect = "You swallow two tablets. The headache and tension ease within minutes.",
-            MoodDelta = 15f, StressDelta = -12f,
+            MoodDelta = 15f, StressDelta = -12f, HealthRestore = 5f,
             IsDeconstructable = false
         },
         ["prescription_meds"] = new ItemDefinition
@@ -168,7 +168,7 @@ public static class ItemRegistry
             Id = "prescription_meds", Name = "Prescription Medication",
             Description = "Someone's anti-anxiety or sleep medication. Could calm a person down considerably.",
             IsUsable = true, UseEffect = "You take a dose. A heavy calm settles over you. The panic recedes to a manageable distance.",
-            MoodDelta = 5f, StressDelta = -22f,
+            MoodDelta = 5f, StressDelta = -22f, HealthRestore = 0f,
             IsDeconstructable = false
         },
         ["blanket"] = new ItemDefinition
@@ -192,7 +192,7 @@ public static class ItemRegistry
             Id = "antiseptic", Name = "Antiseptic",
             Description = "A bottle of hydrogen peroxide or iodine. Burns like fire, but cleans wounds properly.",
             IsUsable = true, UseEffect = "You clean the wound. It stings sharply. Better than an infection.",
-            MoodDelta = 8f, StressDelta = -12f,
+            MoodDelta = 8f, StressDelta = -12f, HealthRestore = 10f,
             IsDeconstructable = false
         },
         ["bandage_roll"] = new ItemDefinition
@@ -200,7 +200,7 @@ public static class ItemRegistry
             Id = "bandage_roll", Name = "Bandage Roll",
             Description = "A roll of gauze from the bathroom cabinet. Basic, but it stops the bleeding.",
             IsUsable = true, UseEffect = "You wrap the gauze tight. The wound is covered. It'll hold.",
-            MoodDelta = 6f, StressDelta = -10f,
+            MoodDelta = 6f, StressDelta = -10f, HealthRestore = 15f,
             IsDeconstructable = false
         },
         ["hand_sanitizer"] = new ItemDefinition
@@ -208,7 +208,7 @@ public static class ItemRegistry
             Id = "hand_sanitizer", Name = "Hand Sanitizer",
             Description = "A 250ml pump bottle. Disinfects wounds in a pinch and keeps your hands clean.",
             IsUsable = true, UseEffect = "You clean your hands and treat any small cuts. Small thing, but it matters.",
-            MoodDelta = 5f, StressDelta = -6f,
+            MoodDelta = 5f, StressDelta = -6f, HealthRestore = 3f,
             IsDeconstructable = false
         },
         ["photo_album"] = new ItemDefinition
@@ -321,7 +321,7 @@ public static class ItemRegistry
         ["batteries"] = new ItemDefinition
         {
             Id = "batteries", Name = "Pack of Batteries",
-            Description = "A blister pack of AA batteries. Three still have charge. Extends a flashlight or radio considerably.",
+            Description = "A blister pack of AA batteries. Three still have charge. Each use: pop them into something powered and feel briefly less helpless. (+mood, 3 uses)",
             IsUsable = true, UseEffect = "You swap in fresh batteries. The light gets brighter. Small victories.",
             MoodDelta = 10f, StressDelta = -8f,
             MaxUses = 3,
@@ -356,8 +356,9 @@ public static class ItemRegistry
         ["crowbar"] = new ItemDefinition
         {
             Id = "crowbar", Name = "Crowbar",
-            Description = "A heavy steel pry bar. Forces locked doors, breaks crates, and fends off dogs.",
+            Description = "A heavy steel pry bar. Forces locked doors, breaks crates, and fends off dogs. +18 attack damage.",
             IsUsable = false,
+            AttackBonus = 18f,
             IsDeconstructable = true, DeconstructChance = 0.8f,
             DeconstructYields = ["scrap_metal", "scrap_metal"]
         },
@@ -372,9 +373,10 @@ public static class ItemRegistry
         ["pocket_knife"] = new ItemDefinition
         {
             Id = "pocket_knife", Name = "Pocket Knife",
-            Description = "A folding knife with a 3-inch blade. Useful for a dozen small tasks.",
+            Description = "A folding knife with a 3-inch blade. Useful for a dozen small tasks. +8 attack damage.",
             IsUsable = true, UseEffect = "You use the knife for a quick task. It feels good to have a real tool.",
             MoodDelta = 6f, StressDelta = -4f,
+            AttackBonus = 8f,
             IsDeconstructable = false
         },
         ["battery_pack"] = new ItemDefinition
@@ -408,20 +410,22 @@ public static class ItemRegistry
         ["rat_carcass"] = new ItemDefinition
         {
             Id = "rat_carcass", Name = "Rat Carcass",
-            Description = "A freshly trapped rat. Unappetising but edible in a crisis.",
+            Description = "A freshly trapped rat. Unappetising but edible in a crisis. Can be cooked — set cook: instanceId with a Fire Steel or Camping Stove in inventory.",
             IsUsable = true,
             UseEffect = "You gut and eat the rat. Every part of you resists, but hunger wins.",
             HungerRestore = 15f, MoodDelta = -5f, StressDelta = -2f,
+            IsCookable = true, CookResult = "cooked_rat_meat",
             IsDeconstructable = true, DeconstructChance = 1.0f,
             DeconstructYields = ["fur_scraps"]
         },
         ["dog_carcass"] = new ItemDefinition
         {
             Id = "dog_carcass", Name = "Dog Carcass",
-            Description = "The body of a large feral dog. More meat than you'd expect.",
+            Description = "The body of a large feral dog. More meat than you'd expect. Can be cooked — set cook: instanceId with a Fire Steel or Camping Stove in inventory.",
             IsUsable = true,
             UseEffect = "You butcher and eat a portion of the dog. A grim meal, but substantial.",
             HungerRestore = 40f, MoodDelta = -8f, StressDelta = -3f,
+            IsCookable = true, CookResult = "cooked_dog_meat",
             IsDeconstructable = true, DeconstructChance = 1.0f,
             DeconstructYields = ["leather_scraps", "bone_shard"]
         },
@@ -449,10 +453,11 @@ public static class ItemRegistry
         ["bone_shard"] = new ItemDefinition
         {
             Id = "bone_shard", Name = "Bone Shard",
-            Description = "A dense fragment of bone. Sharp enough to use as a crude cutting tool.",
+            Description = "A dense fragment of bone. Sharp enough to use as a crude cutting tool. +6 attack damage.",
             IsUsable = true,
             UseEffect = "You use the bone shard as a crude blade. It holds its edge for now.",
             MoodDelta = 4f, StressDelta = -3f,
+            AttackBonus = 6f,
             IsDeconstructable = false
         },
 
@@ -585,82 +590,267 @@ public static class ItemRegistry
         ["filled_tin_can"] = new ItemDefinition
         {
             Id = "filled_tin_can", Name = "Tin Can (Water)",
-            Description = "A tin can filled with tap water. About 400ml — one solid drink.",
+            Description = "A tin can filled with tap or river water. About 400ml — one solid drink. Purify river water with a tablet: item_action: \"purify\".",
             IsUsable = true, UseEffect = "You drink from the tin can. Cold and metallic, but clean.",
             ThirstRestore = 20f, MoodDelta = 6f, StressDelta = -4f,
+            PurifyResult = "purified_water_bottle",
             IsDeconstructable = false
         },
         ["filled_mason_jar"] = new ItemDefinition
         {
             Id = "filled_mason_jar", Name = "Mason Jar (Water)",
-            Description = "A sealed mason jar of tap water. About 500ml.",
+            Description = "A sealed mason jar of tap or river water. About 500ml. Purify with a tablet: item_action: \"purify\".",
             IsUsable = true, UseEffect = "You unscrew the lid and drink. Clean and satisfying.",
             ThirstRestore = 28f, MoodDelta = 7f, StressDelta = -5f,
+            PurifyResult = "purified_water_bottle",
             IsDeconstructable = false
         },
         ["filled_cooking_pot"] = new ItemDefinition
         {
             Id = "filled_cooking_pot", Name = "Cooking Pot (Water)",
-            Description = "A pot filled with roughly 2 litres of tap water. Heavy but invaluable — 3 good drinks.",
+            Description = "A pot filled with roughly 2 litres of tap or river water. Heavy but invaluable — 3 good drinks. Purify with a tablet: item_action: \"purify\".",
             IsUsable = true, UseEffect = "You cup your hands and drink from the pot. Cold and clean.",
             ThirstRestore = 28f, MoodDelta = 8f, StressDelta = -6f,
             MaxUses = 3,
+            PurifyResult = "purified_water_bottle",
             IsDeconstructable = false
         },
         ["filled_water_jug"] = new ItemDefinition
         {
             Id = "filled_water_jug", Name = "Water Jug (Filled)",
-            Description = "A 4-litre jug of tap water. Five solid drinks. Carry this and thirst becomes manageable.",
+            Description = "A 4-litre jug of tap or river water. Five solid drinks. Purify with a tablet: item_action: \"purify\".",
             IsUsable = true, UseEffect = "You tip the jug and drink deeply. The weight of it is reassuring.",
             ThirstRestore = 30f, MoodDelta = 8f, StressDelta = -6f,
             MaxUses = 5,
+            PurifyResult = "purified_water_bottle",
             IsDeconstructable = false
         },
         ["filled_bucket"] = new ItemDefinition
         {
             Id = "filled_bucket", Name = "Bucket (Water)",
-            Description = "A bucket holding about 8 litres. Eight long drinks. Share it or hoard it — your call.",
+            Description = "A bucket holding about 8 litres. Eight long drinks. Purify with a tablet: item_action: \"purify\".",
             IsUsable = true, UseEffect = "You scoop water from the bucket and drink. There's plenty left.",
             ThirstRestore = 32f, MoodDelta = 9f, StressDelta = -7f,
             MaxUses = 8,
+            PurifyResult = "purified_water_bottle",
             IsDeconstructable = false
         },
 
         // ── Carry containers ────────────────────────────────────────────────────
         ["plastic_bag"] = new ItemDefinition
         {
-            Id = "plastic_bag", Name = "Plastic Bag", IsUsable = false,
+            Id = "plastic_bag", Name = "Plastic Bag",
             Description = "A sturdy shopping bag. Holds a few extra items. (+3 carry slots)",
+            IsUsable = true, UseEffect = "You load things into the bag and sling it over your wrist. A little more organised.",
             CarryCapacity = 3,
             MoodDelta = 2f, StressDelta = -1f,
         },
         ["satchel"] = new ItemDefinition
         {
-            Id = "satchel", Name = "Satchel", IsUsable = false,
+            Id = "satchel", Name = "Satchel",
             Description = "A worn canvas shoulder bag. Decent extra storage. (+5 carry slots)",
+            IsUsable = true, UseEffect = "You sling the satchel across your shoulder and redistribute your load. Better.",
             CarryCapacity = 5,
             MoodDelta = 4f, StressDelta = -2f,
         },
         ["backpack"] = new ItemDefinition
         {
-            Id = "backpack", Name = "Backpack", IsUsable = false,
+            Id = "backpack", Name = "Backpack",
             Description = "A sturdy daypack. Significantly expands what you can carry. (+10 carry slots)",
+            IsUsable = true, UseEffect = "You pack everything in properly. The weight distributes evenly. You feel prepared.",
             CarryCapacity = 10,
             MoodDelta = 6f, StressDelta = -4f,
         },
         ["duffel_bag"] = new ItemDefinition
         {
-            Id = "duffel_bag", Name = "Duffel Bag", IsUsable = false,
+            Id = "duffel_bag", Name = "Duffel Bag",
             Description = "A large sports bag. Bulky but holds a lot. (+8 carry slots)",
+            IsUsable = true, UseEffect = "You stuff your gear into the duffel and zip it up. More room than you expected.",
             CarryCapacity = 8,
             MoodDelta = 5f, StressDelta = -3f,
         },
         ["hiking_pack"] = new ItemDefinition
         {
-            Id = "hiking_pack", Name = "Hiking Pack", IsUsable = false,
+            Id = "hiking_pack", Name = "Hiking Pack",
             Description = "A high-capacity expedition pack. Rare find. (+15 carry slots)",
+            IsUsable = true, UseEffect = "You fit the pack to your back and cinch the straps. This changes things — you can carry what you need.",
             CarryCapacity = 15,
             MoodDelta = 8f, StressDelta = -5f,
+        },
+
+        // ── Hospital / medical-grade ─────────────────────────────────────────
+        ["antibiotics"] = new ItemDefinition
+        {
+            Id = "antibiotics", Name = "Antibiotics",
+            Description = "A sealed blister pack of broad-spectrum antibiotics. High-demand trade item. Kills infection, eases the grinding anxiety of untreated wounds.",
+            IsUsable = true, UseEffect = "You take the first dose. The gnawing dread of infection recedes.",
+            MoodDelta = 12f, StressDelta = -28f, HealthRestore = 30f,
+            IsDeconstructable = false
+        },
+        ["morphine"] = new ItemDefinition
+        {
+            Id = "morphine", Name = "Morphine Vial",
+            Description = "A single vial from a crash cart. Extreme pain and stress relief. Use sparingly — there is no more where this came from.",
+            IsUsable = true, UseEffect = "You administer the dose. The world goes soft and warm. Everything feels manageable for the first time in a long while.",
+            MoodDelta = 30f, StressDelta = -40f, HealthRestore = 12f,
+            IsDeconstructable = false
+        },
+        ["surgical_kit"] = new ItemDefinition
+        {
+            Id = "surgical_kit", Name = "Surgical Kit",
+            Description = "A sterile kit: scalpel, sutures, clamps, hemostatic gauze. Usable as-is for serious wound care, or stripped for crafting.",
+            IsUsable = true, UseEffect = "You clean and suture the wound properly. The pain is real, but so is the relief.",
+            MoodDelta = 10f, StressDelta = -22f, HealthRestore = 50f,
+            IsDeconstructable = true, DeconstructChance = 1.0f,
+            DeconstructYields = ["antiseptic", "bandage_roll", "fabric_strips"]
+        },
+
+        // ── Industrial / warehouse ────────────────────────────────────────────
+        ["bolt_cutters"] = new ItemDefinition
+        {
+            Id = "bolt_cutters", Name = "Bolt Cutters",
+            Description = "Heavy 24-inch bolt cutters. Snaps padlocks, chain-link, storage cages. A door-opener in every sense. +22 attack damage.",
+            IsUsable = true, UseEffect = "You snap a lock or chain with a satisfying crunch. What was locked is no longer.",
+            MoodDelta = 10f, StressDelta = -8f,
+            AttackBonus = 22f,
+            IsDeconstructable = true, DeconstructChance = 0.9f,
+            DeconstructYields = ["scrap_metal", "scrap_metal"]
+        },
+        ["propane_tank"] = new ItemDefinition
+        {
+            Id = "propane_tank", Name = "Propane Tank",
+            Description = "A small 1lb camping canister of propane. Fuel for a stove or improvised torch. Not directly edible but pairs with the camping stove.",
+            IsUsable = false,
+            IsDeconstructable = false
+        },
+        ["camping_stove"] = new ItemDefinition
+        {
+            Id = "camping_stove", Name = "Camping Stove",
+            Description = "A compact backpacking stove. Requires a propane tank to run. Cooks food properly. 10 uses per tank. Set cook: instanceId to use.",
+            IsUsable = true, UseEffect = "You light the stove. The small blue flame is almost unbearably civilised.",
+            MoodDelta = 14f, StressDelta = -10f,
+            MaxUses = 10,
+            IsDeconstructable = true, DeconstructChance = 0.7f,
+            DeconstructYields = ["scrap_metal"]
+        },
+        ["cargo_straps"] = new ItemDefinition
+        {
+            Id = "cargo_straps", Name = "Cargo Straps",
+            Description = "Heavy-duty ratchet straps from a loading dock. Lashed to your gear, they add real carrying capacity. (+6 carry slots)",
+            IsUsable = true, UseEffect = "You rig the straps into a makeshift harness. More room than you had before.",
+            CarryCapacity = 6,
+            MoodDelta = 5f, StressDelta = -3f,
+        },
+
+        // ── River / water ─────────────────────────────────────────────────────
+        ["fishing_hook"] = new ItemDefinition
+        {
+            Id = "fishing_hook", Name = "Fishing Hook & Line",
+            Description = "A hook, line, and improvised sinker. Usable at River terrain to catch fish. Set fish: true while holding this. 10 casts.",
+            IsUsable = false,
+            MaxUses = 10,
+            IsDeconstructable = false
+        },
+        ["raw_river_fish"] = new ItemDefinition
+        {
+            Id = "raw_river_fish", Name = "Raw River Fish",
+            Description = "A freshly caught fish from the Irongate River. Edible but better cooked. Cold and slippery.",
+            IsUsable = true, UseEffect = "You eat the raw fish. Cold and chewy. Your body accepts it, but your mind lodges a protest.",
+            HungerRestore = 25f, MoodDelta = -6f, StressDelta = -2f,
+            IsCookable = true, CookResult = "cooked_river_fish",
+            IsDeconstructable = false
+        },
+        ["cooked_river_fish"] = new ItemDefinition
+        {
+            Id = "cooked_river_fish", Name = "Cooked River Fish",
+            Description = "A fish cooked over an open flame. Flaky, hot, and properly filling. The smell draws attention.",
+            IsUsable = true, UseEffect = "You eat the cooked fish. Hot, flaky, and real. This is actual food.",
+            HungerRestore = 40f, MoodDelta = 12f, StressDelta = -8f,
+            IsDeconstructable = false
+        },
+        ["purification_tablet"] = new ItemDefinition
+        {
+            Id = "purification_tablet", Name = "Water Purification Tablets",
+            Description = "A pack of iodine tablets. Purifies river water in a filled container, making it truly safe for long-term storage. 5 tablets — set item_action: \"purify\" and target a filled container.",
+            IsUsable = false,
+            MaxUses = 5,
+            IsDeconstructable = false
+        },
+        ["purified_water_bottle"] = new ItemDefinition
+        {
+            Id = "purified_water_bottle", Name = "Purified Water Bottle",
+            Description = "A container of river water treated with iodine tablets. Chemically safe, slightly bitter. More valuable than tap water after the pipes run dry.",
+            IsUsable = true, UseEffect = "You drink the purified water. Slightly bitter from the iodine, but clean.",
+            ThirstRestore = 35f, MoodDelta = 8f, StressDelta = -6f,
+            IsDeconstructable = false
+        },
+
+        // ── Forest / wilderness ───────────────────────────────────────────────
+        ["wood_axe"] = new ItemDefinition
+        {
+            Id = "wood_axe", Name = "Wood Axe",
+            Description = "A full-sized felling axe found at the forest edge. Chops wood, processes animal carcasses, and is deeply intimidating up close. +25 attack damage.",
+            IsUsable = true, UseEffect = "You heft the axe and feel immediately more capable.",
+            MoodDelta = 8f, StressDelta = -6f,
+            AttackBonus = 25f,
+            IsDeconstructable = true, DeconstructChance = 0.8f,
+            DeconstructYields = ["scrap_metal"]
+        },
+        ["foraging_knife"] = new ItemDefinition
+        {
+            Id = "foraging_knife", Name = "Foraging Knife",
+            Description = "A short fixed-blade knife with a gut hook. Built for field dressing and harvesting. In the forest, gives a second forage roll per turn. +10 attack damage.",
+            IsUsable = true, UseEffect = "You run your thumb along the blade. It holds. You know exactly what to cut and where.",
+            MoodDelta = 6f, StressDelta = -4f,
+            AttackBonus = 10f,
+            IsDeconstructable = false
+        },
+
+        // ── Social / barter ───────────────────────────────────────────────────
+        ["cigarettes"] = new ItemDefinition
+        {
+            Id = "cigarettes", Name = "Pack of Cigarettes",
+            Description = "A near-full pack of cigarettes. Each one is a small ritual of normality. The cough is worth it. High barter value. 10 uses.",
+            IsUsable = true, UseEffect = "You light one and lean against the wall. The ritual of it as much as the nicotine. The tension unwinds.",
+            HungerRestore = -3f, ThirstRestore = -3f, MoodDelta = 20f, StressDelta = -22f,
+            MaxUses = 10,
+            IsDeconstructable = false
+        },
+        ["jewelry"] = new ItemDefinition
+        {
+            Id = "jewelry", Name = "Jewelry",
+            Description = "A handful of rings and a necklace from someone's dresser. No monetary system left, but it still feels like something — and others may want it.",
+            IsUsable = true, UseEffect = "You turn the ring over in your fingers. Someone made this for someone. You hold on to it.",
+            MoodDelta = 10f, StressDelta = -8f,
+            IsDeconstructable = false
+        },
+        ["cash"] = new ItemDefinition
+        {
+            Id = "cash", Name = "Cash",
+            Description = "A roll of bills. Useless for buying anything now, but still a compelling trade token — people remember what money meant.",
+            IsUsable = true, UseEffect = "You count it out of habit. A lot of zeroes that mean nothing now.",
+            MoodDelta = 5f, StressDelta = -4f,
+            IsDeconstructable = false
+        },
+
+        // ── Cooking ───────────────────────────────────────────────────────────
+        ["fire_steel"] = new ItemDefinition
+        {
+            Id = "fire_steel", Name = "Fire Steel",
+            Description = "A ferro rod striker. Makes fire reliably in any weather. Enables cooking raw food. Set cook: instanceId to cook a raw item. 50 uses.",
+            IsUsable = true, UseEffect = "You strike sparks and coax a small flame. The act itself is calming.",
+            MoodDelta = 8f, StressDelta = -7f,
+            MaxUses = 50,
+            IsDeconstructable = false
+        },
+        ["cooked_venison"] = new ItemDefinition
+        {
+            Id = "cooked_venison", Name = "Cooked Venison",
+            Description = "Deer meat, properly cooked. Rich, gamey, and substantial. One of the better meals you can get out here. 3 servings.",
+            IsUsable = true, UseEffect = "You eat the venison hot off the flame. Dense and flavourful. Your body responds immediately.",
+            HungerRestore = 65f, MoodDelta = 18f, StressDelta = -10f,
+            MaxUses = 3,
+            IsDeconstructable = false
         },
 
         // ── Forest forage items ───────────────────────────────────────────────
@@ -683,10 +873,11 @@ public static class ItemRegistry
         ["venison"] = new ItemDefinition
         {
             Id = "venison", Name = "Venison",
-            Description = "Raw deer meat, thick-cut. Needs cooking ideally, but hunger doesn't wait.",
+            Description = "Raw deer meat, thick-cut. Better cooked — set cook: instanceId with a Fire Steel or Camping Stove in inventory.",
             IsUsable = true, UseEffect = "You eat the raw venison. It's rough going, but your body needed it.",
             HungerRestore = 50f, MoodDelta = -5f,
             MaxUses = 3,
+            IsCookable = true, CookResult = "cooked_venison",
             IsDeconstructable = false
         },
     };

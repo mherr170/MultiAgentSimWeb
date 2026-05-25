@@ -18,4 +18,7 @@ public interface IPresenceSystem
 
     /// Returns the last cell where agentA and agentB were co-located, or (-1,-1).
     (int x, int y) GetMeetingPoint(string agentA, string agentB);
+
+    /// True if the agent occupied the same cell last tick (didn't move).
+    bool IsStationary(string agentName);
 }

@@ -29,6 +29,16 @@ public class AgentMood
         else if (Mood < 0) Mood = Math.Min(0f, Mood + 3f);
 
         AdjustStress(-2f);
+
+        // Trust drifts toward neutral at 0.5/turn — relationships fade without contact,
+        // and grudges slowly heal. Active interaction rebuilds trust faster than this erodes it.
+        foreach (var key in _trust.Keys.ToList())
+        {
+            float t = _trust[key];
+            if      (t >  0.5f) _trust[key] = t - 0.5f;
+            else if (t < -0.5f) _trust[key] = t + 0.5f;
+            else                 _trust[key] = 0f;
+        }
     }
 
     // ── Labels ───────────────────────────────────────────────────────────────
@@ -54,10 +64,13 @@ public class AgentMood
 
     public static string TrustLabel(float trust) => trust switch
     {
-        > 50f  => "deeply trusting",
+        > 85f  => "deeply bonded",
+        > 70f  => "close friend",
+        > 50f  => "trusted friend",
         > 20f  => "friendly",
         > -10f => "neutral",
         > -30f => "wary",
-        _      => "suspicious"
+        > -60f => "suspicious",
+        _      => "hostile"
     };
 }

@@ -7,6 +7,11 @@ public class ItemSystem : IItemSystem
     private readonly Dictionary<(int x, int y), List<ItemInstance>> _cellItems        = new();
     private readonly Dictionary<string, List<ItemInstance>>         _agentInventories = new();
     private readonly Dictionary<(int x, int y), List<ItemInstance>> _placedTraps      = new();
+
+    // Maps item InstanceId → agent who deliberately dropped it (cleared on death drops so
+    // corpse loot is always fair game). Used to detect witnessed theft.
+    private readonly Dictionary<Guid, string> _droppedBy = new();
+
     private readonly Random _rng = new();
     private WorldState _world = null!;
     private int _respawnTick = 0;
@@ -33,7 +38,12 @@ public class ItemSystem : IItemSystem
     private static readonly string[] _respawnForest =
     [
         "wild_berries", "wild_berries", "mushrooms", "mushrooms",
-        "wild_berries", "mushrooms"
+        "wild_berries", "mushrooms", "wild_berries"
+    ];
+
+    private static readonly string[] _respawnRiver =
+    [
+        "fishing_hook", "purification_tablet"
     ];
 
     public void Attach(WorldState world) => _world = world;
@@ -215,6 +225,14 @@ public class ItemSystem : IItemSystem
         PlaceItem("hammer",            2, 26);
         PlaceItem("duct_tape",         3, 23);
         PlaceItem("battery_pack",      4, 24);
+        // Industrial-exclusive finds
+        PlaceItem("bolt_cutters",      1, 25);
+        PlaceItem("bolt_cutters",      4, 26);
+        PlaceItem("propane_tank",      2, 23);
+        PlaceItem("propane_tank",      3, 26);
+        PlaceItem("camping_stove",     1, 24);  // emergency kit in warehouse break room
+        PlaceItem("cargo_straps",      4, 23);
+        PlaceItem("cargo_straps",      3, 24);
 
         // Hendricks Cold Storage (5-8, 23-26) — frozen food and water reserves
         PlaceItem("canned_food",         6, 24);
@@ -259,6 +277,12 @@ public class ItemSystem : IItemSystem
         PlaceItem("batteries",          34,  5);
         PlaceItem("water_jug",          33,  3);  // IV bags long dry
         PlaceItem("bucket",             34,  3);
+        // Hospital-exclusive high-tier medical items
+        PlaceItem("antibiotics",        32,  6);
+        PlaceItem("antibiotics",        33,  6);
+        PlaceItem("morphine",           34,  6);  // crash cart
+        PlaceItem("surgical_kit",       29,  7);
+        PlaceItem("surgical_kit",       33,  7);
 
         // ── Eastside Flats (28-35, 10-17) ─────────────────────────────────────
         PlaceItem("canned_food",       31, 13);
@@ -293,6 +317,9 @@ public class ItemSystem : IItemSystem
         PlaceItem("matches",            5, 33);
         PlaceItem("blanket",            4, 35);   // emergency bivouac gear
         PlaceItem("winter_coat",        3, 32);
+        PlaceItem("wood_axe",           6, 29);   // woodsman's axe at the forest edge
+        PlaceItem("foraging_knife",     3, 33);   // left by a hunter
+        PlaceItem("fire_steel",         5, 35);   // emergency kit — fire starting
 
         // ── Birchwood Forest (10-17, 28-35) ──────────────────────────────────
         PlaceItem("wild_berries",      12, 30);
@@ -303,6 +330,8 @@ public class ItemSystem : IItemSystem
         PlaceItem("lighter",           12, 34);
         PlaceItem("rope",              14, 30);
         PlaceItem("water_jug",         13, 33);   // left by a hiker
+        PlaceItem("foraging_knife",    15, 31);   // lost by a hiker
+        PlaceItem("fire_steel",        11, 35);
 
         // ── River areas (Irongate River, River Bend, The Delta) ───────────────
         // Empty containers left at the water's edge
@@ -315,6 +344,11 @@ public class ItemSystem : IItemSystem
         PlaceItem("water_jug",         29, 32);
         PlaceItem("flashlight",        32, 20);   // dropped by someone who came to drink
         PlaceItem("rope",              20, 32);   // tied to a tree stump near the bank
+        // Fishing and purification — stashed or carried by earlier survivors
+        PlaceItem("fishing_hook",      30, 22);   // tackle box left at the bank
+        PlaceItem("fishing_hook",      21, 32);   // River Bend — someone was living here
+        PlaceItem("purification_tablet", 33, 21); // emergency kit
+        PlaceItem("purification_tablet", 22, 30); // River Bend hiker supplies
 
         // ── Carry containers — worth finding across the city ──────────────────
         PlaceItem("plastic_bag",  13, 13);
@@ -322,11 +356,29 @@ public class ItemSystem : IItemSystem
         PlaceItem("hiking_pack",  19, 19);  // Hendricks Warehouse — best reward
         PlaceItem("duffel_bag",   31,  4);  // hospital emergency bag
 
+        // ── Social/barter items — scattered lightly across the city ───────────
+        PlaceItem("cigarettes",    9, 13);   // street corner
+        PlaceItem("cigarettes",   22, 9);    // storefront shelf
+        PlaceItem("cigarettes",   19, 22);   // apartment kitchen drawer
+        PlaceItem("jewelry",       4,  9);   // Rosewood bedroom
+        PlaceItem("jewelry",      22, 14);   // Hargrove dresser
+        PlaceItem("jewelry",      31, 14);   // Eastside Flats
+        PlaceItem("cash",         13,  9);   // Rosewood desk
+        PlaceItem("cash",          9, 22);   // street wallet
+        PlaceItem("cash",         22, 19);   // Pak's Stockroom till
+
+        // ── Fire steel — a few across apartments and storefronts ──────────────
+        PlaceItem("fire_steel",   13, 22);   // Hargrove utility drawer
+        PlaceItem("fire_steel",   22,  4);   // Rosewood camping gear
+        PlaceItem("fire_steel",    4, 22);   // Calloway tool box
+        PlaceItem("fire_steel",   31, 13);   // Eastside Flats
+
         // ── Scatter across streets/storefronts ───────────────────────────────
         var streetItems = new[]
         {
             "scrap_metal", "crowbar", "duct_tape", "battery_pack", "wire_bundle",
-            "lighter", "matches", "candle", "energy_drink", "glass_bottle"
+            "lighter", "matches", "candle", "energy_drink", "glass_bottle",
+            "cigarettes", "cash"
         };
         var storeItems = new[]
         {
@@ -334,7 +386,8 @@ public class ItemSystem : IItemSystem
             "sports_drink", "instant_noodles", "peanut_butter", "granola_bar",
             "protein_bar", "crackers", "canned_meat", "chocolate_bar",
             "prescription_meds", "painkillers", "flashlight", "candle",
-            "matches", "instant_coffee", "honey_jar", "batteries"
+            "matches", "instant_coffee", "honey_jar", "batteries",
+            "cigarettes", "fire_steel"
         };
         var apartmentItems = new[]
         {
@@ -345,12 +398,14 @@ public class ItemSystem : IItemSystem
             "antiseptic", "bandage_roll", "book", "playing_cards",
             "photo_album", "winter_coat", "batteries", "rope",
             "hand_sanitizer", "glass_bottle", "stuffed_animal", "hammer",
-            "tin_can", "mason_jar", "cooking_pot", "water_jug", "bucket"
+            "tin_can", "mason_jar", "cooking_pot", "water_jug", "bucket",
+            "cigarettes", "jewelry", "cash", "fire_steel"
         };
         var forestItems = new[]
         {
             "wild_berries", "wild_berries", "mushrooms", "mushrooms",
-            "wild_berries", "mushrooms", "rope", "pocket_knife", "blanket"
+            "wild_berries", "mushrooms", "rope", "pocket_knife", "blanket",
+            "foraging_knife", "fire_steel"
         };
 
         int placed = 0, attempts = 0;
@@ -445,6 +500,38 @@ public class ItemSystem : IItemSystem
         }
         _world.LogDev($"[{agentName}] pick_up {item.DisplayName} → mood +4  stress -2");
         _world.Memory.AddMemory(agentName, $"Picked up {item.DisplayName} at ({pos.x},{pos.y}).");
+
+        // Theft detection: if the original dropper is still nearby and watching, penalise trust.
+        if (_droppedBy.TryGetValue(item.InstanceId, out var dropper) && dropper != agentName)
+        {
+            _droppedBy.Remove(item.InstanceId);
+            var visible = _world.GetVisibleAgents(agentName);
+            bool dropperWatching = visible.Any(a => a.name == dropper);
+            if (dropperWatching && _world.Mood.Has(dropper))
+            {
+                _world.GetMood(dropper).AdjustTrust(agentName, -18f);
+                _world.GetMood(dropper).AdjustStress(+8f);
+                _world.Memory.AddMemory(dropper,
+                    $"{_world.DescribeAgent(dropper, agentName)} took my {item.DisplayName} while I was watching.");
+                _world.LogDev($"[{dropper}] witnessed theft of {item.DisplayName} by {agentName} → trust[{agentName}] -18  stress +8");
+            }
+            // Bystanders who know both parties also lose some trust in the thief.
+            foreach (var (witness, _, _) in visible)
+            {
+                if (witness == agentName || witness == dropper) continue;
+                if (!_world.KnowsName(witness, agentName) || !_world.KnowsName(witness, dropper)) continue;
+                if (!_world.Mood.Has(witness)) continue;
+                _world.GetMood(witness).AdjustTrust(agentName, -6f);
+                _world.Memory.AddMemory(witness,
+                    $"Saw {agentName} take {item.DisplayName} from {dropper}.");
+                _world.LogDev($"[{witness}] witnessed theft → trust[{agentName}] -6");
+            }
+        }
+        else
+        {
+            _droppedBy.Remove(item.InstanceId);
+        }
+
         return true;
     }
 
@@ -463,6 +550,7 @@ public class ItemSystem : IItemSystem
             _cellItems[pos] = cellList;
         }
         cellList.Add(item);
+        _droppedBy[item.InstanceId] = agentName; // track ownership for theft detection
         _world.LogAt(pos.x, pos.y, $"{agentName} drops {item.DisplayName}.");
         return true;
     }
@@ -477,8 +565,38 @@ public class ItemSystem : IItemSystem
 
         var def = item.Definition;
 
-        if (def.HungerRestore > 0) _world.Survival.AddHunger(agentName, def.HungerRestore);
+        if (def.HungerRestore > 0)
+        {
+            _world.Survival.AddHunger(agentName, def.HungerRestore);
+
+            // Eating-while-starving: witnesses whose own hunger is critically low lose
+            // trust in the eater for not sharing. protects_others penalise harder;
+            // self_reliant witnesses care less.
+            var visible = _world.GetVisibleAgents(agentName);
+            foreach (var (witnessName, _, _) in visible)
+            {
+                if (!_world.Mood.Has(witnessName)) continue;
+                float witnessHunger = _world.GetHunger(witnessName);
+                if (witnessHunger >= 20f) continue;           // only triggered when witness is starving
+
+                var witnessPersonality = _world.GetPersonality(witnessName);
+                float penalty = witnessPersonality.HasFlag("protects_others") ? -14f
+                              : witnessPersonality.HasFlag("self_reliant")    ?  -5f
+                              :                                                  -9f;
+
+                _world.GetMood(witnessName).AdjustTrust(agentName, penalty);
+                _world.GetMood(witnessName).AdjustStress(+4f);
+                _world.Memory.AddMemory(witnessName,
+                    $"{_world.DescribeAgent(witnessName, agentName)} ate {def.Name} while I was starving right next to them.");
+                _world.LogDev($"[{witnessName}] trust[{agentName}] {penalty:+0;-0}  stress +4  (ate while witness starving)");
+            }
+        }
         if (def.ThirstRestore > 0) _world.Survival.AddThirst(agentName, def.ThirstRestore);
+        if (def.HealthRestore > 0)
+        {
+            float fieldMedicMult = _world.GetPersonality(agentName).IsFieldMedic ? 1.5f : 1.0f;
+            _world.Survival.AddHealth(agentName, def.HealthRestore * fieldMedicMult);
+        }
 
         // Consume: multi-use items lose one charge; single-use items are removed entirely.
         if (def.MaxUses > 0)
@@ -505,6 +623,11 @@ public class ItemSystem : IItemSystem
         var restoreNote = "";
         if (def.HungerRestore > 0) restoreNote += $"  hunger +{def.HungerRestore:F0}";
         if (def.ThirstRestore > 0) restoreNote += $"  thirst +{def.ThirstRestore:F0}";
+        if (def.HealthRestore > 0)
+        {
+            float fmMult = _world.GetPersonality(agentName).IsFieldMedic ? 1.5f : 1.0f;
+            restoreNote += $"  health +{def.HealthRestore * fmMult:F0}{(fmMult > 1 ? " [field medic]" : "")}";
+        }
         _world.LogDev($"[{agentName}] use {def.Name} → mood {def.MoodDelta:+0;-0}  stress {def.StressDelta:+0;-0}{restoreNote}");
         _world.Memory.AddMemory(agentName, $"Used {def.Name} — {effect}.");
         return effect;
@@ -515,7 +638,8 @@ public class ItemSystem : IItemSystem
         var fromPos = _world.GetAgentPosition(fromAgent);
         var toPos   = _world.GetAgentPosition(toAgent);
         if (fromPos.x < 0 || toPos.x < 0) return false;
-        if (fromPos != toPos) return false;
+        // Must be within the same earshot as conversations (visible to each other).
+        if (!_world.GetVisibleAgents(fromAgent).Any(a => a.name == toAgent)) return false;
 
         var fromInv = _agentInventories[fromAgent];
         var item = fromInv.FirstOrDefault(i => i.InstanceId.ToString() == instanceIdStr);
@@ -524,18 +648,47 @@ public class ItemSystem : IItemSystem
         fromInv.Remove(item);
         _agentInventories[toAgent].Add(item);
         _world.LogAt(fromPos.x, fromPos.y, $"{fromAgent} gives {item.DisplayName} to {toAgent}.");
+        var giverPersonality = _world.GetPersonality(fromAgent);
+        bool silverTongue = giverPersonality.IsSilverTongue;
         if (_world.Mood.Has(fromAgent))
         {
             var gm = _world.Mood.GetMood(fromAgent);
-            gm.AdjustMood(+5f); gm.AdjustTrust(toAgent, +5f);
+            bool hoardsFood    = giverPersonality.HasFlag("hoards_food");
+            bool isFood        = item.Definition.HungerRestore > 0;
+            bool protectsOthers = giverPersonality.HasFlag("protects_others");
+
+            if (hoardsFood && isFood)
+            {
+                // Hoarding agents give food reluctantly — stress and regret
+                gm.AdjustMood(-3f); gm.AdjustStress(+5f);
+                _world.LogDev($"[{fromAgent}] hoards_food — gave food reluctantly → mood -3  stress +5");
+            }
+            else
+            {
+                float protectBonus = protectsOthers ? 4f : 0f;
+                gm.AdjustMood(+5f + protectBonus);
+                if (protectBonus > 0)
+                    _world.LogDev($"[{fromAgent}] protects_others — giving boost → mood +{5f + protectBonus:F0}");
+            }
+            gm.AdjustTrust(toAgent, +5f);
         }
         if (_world.Mood.Has(toAgent))
         {
+            float trustGain = silverTongue ? 20f : 10f;
             var rm = _world.Mood.GetMood(toAgent);
-            rm.AdjustMood(+8f); rm.AdjustStress(-3f); rm.AdjustTrust(fromAgent, +10f);
+            if (_world.GetPersonality(toAgent).HasFlag("self_reliant"))
+            {
+                // Doesn't want charity — trust gain is halved, no mood boost
+                rm.AdjustTrust(fromAgent, trustGain * 0.5f);
+                _world.LogDev($"[{toAgent}] self_reliant — received {item.DisplayName} reluctantly → trust[{fromAgent}] +{trustGain * 0.5f:F0}  (no mood boost)");
+            }
+            else
+            {
+                rm.AdjustMood(+8f); rm.AdjustStress(-3f); rm.AdjustTrust(fromAgent, trustGain);
+                _world.LogDev($"[{toAgent}] receive {item.DisplayName} → mood +8  stress -3  trust[{fromAgent}] +{(silverTongue ? 20 : 10)}{(silverTongue ? " [silver tongue]" : "")}");
+            }
         }
-        _world.LogDev($"[{fromAgent}] give {item.DisplayName} → mood +5  trust[{toAgent}] +5");
-        _world.LogDev($"[{toAgent}] receive {item.DisplayName} → mood +8  stress -3  trust[{fromAgent}] +10");
+        _world.LogDev($"[{fromAgent}] give {item.DisplayName} → trust[{toAgent}] +5{(silverTongue ? "  [silver tongue]" : "")}");
         _world.Memory.AddMemory(fromAgent, $"Gave {item.DisplayName} to {toAgent}.");
         _world.Memory.AddMemory(toAgent, $"Received {item.DisplayName} from {fromAgent}.");
         return true;
@@ -589,6 +742,23 @@ public class ItemSystem : IItemSystem
         return true;
     }
 
+    public ItemInstance? TryRemoveFromInventory(string agentName, string instanceIdStr)
+    {
+        if (!_agentInventories.TryGetValue(agentName, out var inv)) return null;
+        var item = inv.FirstOrDefault(i => i.InstanceId.ToString() == instanceIdStr);
+        if (item is null) return null;
+        inv.Remove(item);
+        return item;
+    }
+
+    public bool TryAddItemInstance(string agentName, ItemInstance item)
+    {
+        if (!_agentInventories.TryGetValue(agentName, out var inv)) return false;
+        if (inv.Count >= GetCarryCapacity(agentName)) return false;
+        inv.Add(item);
+        return true;
+    }
+
     public void DropInventoryAt(string agentName, int x, int y)
     {
         if (!_agentInventories.TryGetValue(agentName, out var inv) || inv.Count == 0) return;
@@ -597,7 +767,11 @@ public class ItemSystem : IItemSystem
             cellList = new List<ItemInstance>();
             _cellItems[(x, y)] = cellList;
         }
+        // Death drops: clear ownership so corpse loot is fair game.
+        foreach (var item in inv)
+            _droppedBy.Remove(item.InstanceId);
         cellList.AddRange(inv);
+        inv.Clear();
     }
 
     public void AddToInventory(string agentName, string definitionId)
@@ -637,19 +811,19 @@ public class ItemSystem : IItemSystem
         if (string.IsNullOrEmpty(fillId)) return null;
 
         // Replace the empty container with its filled counterpart.
-        var idx = inv.IndexOf(item);
+        int idx = inv.IndexOf(item);
         inv[idx] = new ItemInstance(fillId);
 
         var filledName = ItemRegistry.Get(fillId).Name;
-        _world.LogAt(pos.x, pos.y, $"{agentName} fills {item.DisplayName} with water → {filledName}.");
+        _world.LogAt(pos.x, pos.y, $"{agentName} fills {item.DisplayName} with water -> {filledName}.");
         if (_world.Mood.Has(agentName))
         {
             var m = _world.Mood.GetMood(agentName);
             m.AdjustMood(+5f); m.AdjustStress(-4f);
         }
-        _world.LogDev($"[{agentName}] fill {item.DisplayName} → {filledName}  mood +5  stress -4");
-        _world.Memory.AddMemory(agentName, $"Filled {item.DisplayName} with water → {filledName} at ({pos.x},{pos.y}).");
-        return $"fills {item.DisplayName} with water → {filledName}";
+        _world.LogDev($"[{agentName}] fill {item.DisplayName} -> {filledName}  mood +5  stress -4");
+        _world.Memory.AddMemory(agentName, $"Filled {item.DisplayName} with water -> {filledName} at ({pos.x},{pos.y}).");
+        return $"fills {item.DisplayName} with water -> {filledName}";
     }
 
     public string? TryPlaceTrap(string agentName, string instanceIdStr)
@@ -722,6 +896,7 @@ public class ItemSystem : IItemSystem
                 TerrainType.Apartment  => _respawnApartment,
                 TerrainType.Storefront => _respawnStorefront,
                 TerrainType.Forest     => _respawnForest,
+                TerrainType.River      => _respawnRiver,
                 _                      => null
             };
             if (pool is null) continue;

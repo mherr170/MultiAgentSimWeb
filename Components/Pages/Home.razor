@@ -83,8 +83,14 @@
                     </label>
                     <label class="lmstudio-field">
                         <span>Model</span>
-                        <input type="text" @bind="lmStudioModel" disabled="@Sim.IsRunning"
-                               placeholder="gemma-3-4b" />
+                        <div style="display:flex;gap:4px;align-items:center">
+                            <input type="text" @bind="lmStudioModel" disabled="@Sim.IsRunning"
+                                   placeholder="gemma-3-4b" style="flex:1" />
+                            <button class="btn-detect-model" @onclick="DetectModel"
+                                    disabled="@Sim.IsRunning" title="Query LM Studio for the loaded model ID">
+                                @(_detectingModel ? "…" : "Detect")
+                            </button>
+                        </div>
                     </label>
                 </div>
             }
@@ -119,6 +125,7 @@
     {
         <div class="sim-panels">
             <MapView World="Sim.World" AgentColors="Sim.AgentColorHex"
+                     CurrentAgent="@Sim.CurrentAgent?.Name"
                      OnAgentClicked="InspectAgent" />
             <InventoryView World="Sim.World" AgentColors="Sim.AgentColorHex"
                            InspectedAgent="@_inspectedAgent"
@@ -143,8 +150,11 @@
                 </button>
             </div>
             @{
+                // Snapshot once so the background simulation thread can't mutate
+                // the list mid-render (InvalidOperationException: collection modified).
+                var eventsSnapshot = Sim.Events.ToList();
                 var currentRound = Sim.World?.CurrentRound ?? 0;
-                var criticalAlerts = Sim.Events
+                var criticalAlerts = eventsSnapshot
                     .Select((evt, idx) => (evt, idx))
                     .Where(x => (x.evt.Type == SimEventTypes.Death || x.evt.Type == SimEventTypes.Animal || x.evt.Type == SimEventTypes.AnimalAttack || x.evt.Type == SimEventTypes.DirectResponse)
                                 && !_dismissedAlerts.Contains(x.idx)
@@ -195,7 +205,7 @@
                 @foreach (var group in TypeGroups)
                 {
                     var g = group;
-                    var isShown = !_importantOnly && (_filteredTypes.Count == 0 || g.Types.Any(t => _filteredTypes.Contains(t)));
+                    var isShown = g.Types.Any(t => _filteredTypes.Contains(t));
                     <button class="btn-agent-filter @(isShown ? "filter-active" : "filter-inactive")"
                             @onclick="() => ToggleTypeGroupFilter(g.Types)">@g.Label</button>
                 }
@@ -256,9 +266,7 @@
                     {
                         @if (((evt.Type != "dev" && evt.Type != "llm") || _verbose) &&
                              (_filteredAgents.Count == 0 || _filteredAgents.Contains(evt.AgentName)) &&
-                             (_importantOnly
-                                ? ImportantTypes.Contains(evt.Type)
-                                : (_filteredTypes.Count == 0 || _filteredTypes.Contains(evt.Type))))
+                             PassesTypeFilter(evt.Type))
                         {
                             <div class="event @evt.Type">
                                 <div class="event-head">
@@ -329,9 +337,14 @@
         SimEventTypes.AnimalAttack,
         SimEventTypes.Animal,
         SimEventTypes.Speech,
+        SimEventTypes.DirectMessage,
         SimEventTypes.DirectResponse,
         SimEventTypes.Item,
         SimEventTypes.Scavenge,
+        SimEventTypes.DrinkTap,
+        SimEventTypes.DrinkFountain,
+        SimEventTypes.DrinkRiver,
+        SimEventTypes.Move,
     ];
 
     // Groups the event feed by round and returns it newest-first: the latest round at
@@ -343,7 +356,7 @@
         SimEvent? header = null;
         var current = new List<SimEvent>();
 
-        foreach (var e in Sim.Events)
+        foreach (var e in Sim.Events.ToList())
         {
             if (e.Type == SimEventTypes.Round)
             {
@@ -379,6 +392,7 @@
     private string provider = "lmstudio";
     private string lmStudioEndpoint = "http://10.0.0.119:1234/v1/chat/completions";
     private string lmStudioModel    = "qwen2.5-7b-instruct-1m";
+    private bool   _detectingModel  = false;
 
     private List<AgentDefinition> agentDefs = [];
 
@@ -389,7 +403,7 @@
         var profiles = ProfileService.Profiles;
         situation = profiles.Situation;
         agentDefs = profiles.Agents
-            .Select(a => new AgentDefinition { Name = a.Name, Persona = a.Persona })
+            .Select(a => new AgentDefinition { Name = a.Name, Persona = a.Persona, Profile = a.Profile })
             .ToList();
 
         if (agentDefs.Count == 0)
@@ -407,7 +421,7 @@
     private HashSet<int> _dismissedAlerts = new();
 
     private IReadOnlyList<SimEvent> ChatEvents =>
-        Sim.Events
+        Sim.Events.ToList()
            .Where(e => e.Type == SimEventTypes.Speech || e.Type == SimEventTypes.DirectResponse)
            .TakeLast(24)
            .ToList();
@@ -416,8 +430,8 @@
 
     private SimSummary? GetSummary()
     {
-        if (Sim.IsRunning || !Sim.Events.Any()) return null;
-        var events = Sim.Events;
+        var events = Sim.Events.ToList();
+        if (Sim.IsRunning || events.Count == 0) return null;
         return new SimSummary(
             Rounds: Sim.World?.CurrentRound ?? 0,
             Survivors: Sim.AgentColorHex.Count,
@@ -456,29 +470,56 @@
             _filteredAgents.Add(name);
     }
 
-    private void ToggleImportantOnly()
+    private async Task DetectModel()
     {
-        _importantOnly = !_importantOnly;
-        if (_importantOnly) _filteredTypes.Clear(); // Important mode supersedes manual type selection
+        _detectingModel = true;
+        StateHasChanged();
+        try
+        {
+            var baseUrl = lmStudioEndpoint.Trim();
+            // Build the /v1/models URL from whatever endpoint is configured
+            var uri = new Uri(baseUrl);
+            var modelsUrl = $"{uri.Scheme}://{uri.Authority}/v1/models";
+            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            var resp = await http.GetFromJsonAsync<ModelsListResponse>(modelsUrl);
+            var id = resp?.Data?.FirstOrDefault()?.Id;
+            if (!string.IsNullOrWhiteSpace(id))
+                lmStudioModel = id;
+        }
+        catch { /* silently ignore — user can type manually */ }
+        finally
+        {
+            _detectingModel = false;
+            StateHasChanged();
+        }
     }
+
+    private record ModelsListResponse(
+        [property: System.Text.Json.Serialization.JsonPropertyName("data")]
+        List<ModelEntry>? Data);
+    private record ModelEntry(
+        [property: System.Text.Json.Serialization.JsonPropertyName("id")]
+        string Id);
+
+    private void ToggleImportantOnly() => _importantOnly = !_importantOnly;
 
     private void ToggleTypeGroupFilter(string[] types)
     {
-        _importantOnly = false; // picking a specific type group exits Important mode
-        bool allPresent = types.All(t => _filteredTypes.Contains(t));
-        if (_filteredTypes.Count == 0)
-        {
-            // switching from "all" — activate only this group
-            foreach (var t in types) _filteredTypes.Add(t);
-        }
-        else if (allPresent)
-        {
+        if (types.All(t => _filteredTypes.Contains(t)))
             foreach (var t in types) _filteredTypes.Remove(t);
-        }
         else
-        {
             foreach (var t in types) _filteredTypes.Add(t);
-        }
+    }
+
+    // Returns true when the event type should be shown given current filter state.
+    // Filters are additive: Important + Thoughts shows the union of both sets.
+    // If nothing is selected, everything passes.
+    private bool PassesTypeFilter(string type)
+    {
+        if (!_importantOnly && _filteredTypes.Count == 0) return true;
+        if (_importantOnly && ImportantTypes.Contains(type)) return true;
+        if (_filteredTypes.Contains(type)) return true;
+        return false;
     }
 
     private bool CanStart =>
@@ -520,7 +561,7 @@
         var config = new SimulationConfig
         {
             Situation     = situation.Trim(),
-            Agents        = agentDefs.Select(a => new AgentDefinition { Name = a.Name, Persona = a.Persona }).ToList(),
+            Agents        = agentDefs.Select(a => new AgentDefinition { Name = a.Name, Persona = a.Persona, Profile = a.Profile }).ToList(),
             Rounds        = rounds,
             MinTurnMs     = (int)(minTurnSeconds * 1000),
             AgentColors   = AccentColors,
@@ -534,6 +575,13 @@
         _dismissedAlerts.Clear();
         _filteredAgents.Clear();
         _filteredTypes.Clear();
-        await Sim.RunAsync(config);
+        try
+        {
+            await Sim.RunAsync(config);
+        }
+        catch (Exception ex)
+        {
+            configError = $"Simulation error: {ex.GetType().Name}: {ex.Message}";
+        }
     }
 }

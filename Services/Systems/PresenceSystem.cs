@@ -57,14 +57,23 @@ public class PresenceSystem : IPresenceSystem
             }
         }
 
-        // Passive shelter bonus
+        // Passive shelter bonus (or penalty for claustrophobic agents)
         if (_shelterCells.TryGetValue(agentName, out var shelter) && shelter == pos
             && _world.Mood.Has(agentName))
         {
             var m = _world.Mood.GetMood(agentName);
-            m.AdjustStress(-3f);
-            m.AdjustMood(+2f);
-            _world.LogDev($"[{agentName}] at shelter → stress -3  mood +2");
+            if (_world.GetPersonality(agentName).HasFlag("claustrophobic"))
+            {
+                m.AdjustStress(+3f);
+                m.AdjustMood(-2f);
+                _world.LogDev($"[{agentName}] claustrophobic at shelter → stress +3  mood -2");
+            }
+            else
+            {
+                m.AdjustStress(-3f);
+                m.AdjustMood(+2f);
+                _world.LogDev($"[{agentName}] at shelter → stress -3  mood +2");
+            }
         }
 
         // ── Social anchoring ─────────────────────────────────────────────────
@@ -81,6 +90,12 @@ public class PresenceSystem : IPresenceSystem
             }
         }
     }
+
+    // NOTE: _lastPositions is updated to the current position during TickPresence, so comparing
+    // against it after that tick would always return true. We use _consecutiveTurns instead:
+    // a value of ≥2 means the agent was already at this cell at the end of the last turn.
+    public bool IsStationary(string agentName) =>
+        _consecutiveTurns.GetValueOrDefault(agentName, 0) >= 2;
 
     public bool          HasShelter(string agentName)     => _shelterCells.ContainsKey(agentName);
     public (int x, int y) GetShelter(string agentName)    => _shelterCells.GetValueOrDefault(agentName, (-1, -1));

@@ -10,4 +10,8 @@ public interface IForagingSystem
     string? TryForage(string agentName);
 
     bool CanForage(TerrainType terrain);
+
+    /// Returns the SCAVENGE context line for the given terrain, or null if scavenging is not
+    /// available there. Callers show the "not available" fallback when null is returned.
+    string? ScavengeHint(TerrainType terrain);
 }

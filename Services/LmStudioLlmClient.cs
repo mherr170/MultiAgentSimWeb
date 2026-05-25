@@ -8,12 +8,12 @@ namespace MultiAgentSimWeb.Services;
 public class LmStudioLlmClient : ILlmClient
 {
     private readonly string _endpoint;
-    private readonly string _model;
-    private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(120) };
+    private string _model;
+    private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(60) };
 
     private static readonly TimeSpan[] RetryDelays =
-        [TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(12)];
-    private const int MaxAttempts = 3;
+        [TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(8)];
+    private const int MaxAttempts = 2;
 
     public LmStudioLlmClient(string endpoint = "http://10.0.0.119:1234/v1/chat/completions",
                               string model    = "llama-3.2-3b-instruct")
@@ -25,23 +25,23 @@ public class LmStudioLlmClient : ILlmClient
     public async Task<LlmResult> CompleteAsync(string systemPrompt, string userMessage, int maxTokens,
         CancellationToken ct = default, Action<string>? onStatus = null)
     {
-        var payload = new
-        {
-            model    = _model,
-            messages = new[]
-            {
-                new { role = "system", content = systemPrompt },
-                new { role = "user",   content = userMessage  },
-            },
-            max_tokens  = maxTokens,
-            temperature = 0.7,
-        };
-
         Exception? lastException = null;
 
         for (int attempt = 0; attempt < MaxAttempts; attempt++)
         {
             ct.ThrowIfCancellationRequested();
+
+            var payload = new
+            {
+                model    = _model,
+                messages = new[]
+                {
+                    new { role = "system", content = systemPrompt },
+                    new { role = "user",   content = userMessage  },
+                },
+                max_tokens  = maxTokens,
+                temperature = 0.7,
+            };
 
             var estPromptTokens = (systemPrompt.Length + userMessage.Length) / 4;
             onStatus?.Invoke($"→ Sending to LM Studio (attempt {attempt + 1}/{MaxAttempts}, ~{estPromptTokens} prompt tok in, up to {maxTokens} tok out)");
@@ -61,10 +61,26 @@ public class LmStudioLlmClient : ILlmClient
                     continue;
                 }
 
+                if (response.StatusCode == HttpStatusCode.BadRequest)
+                {
+                    // 400 usually means model name mismatch — auto-detect and retry once
+                    var detected = await TryDetectModelAsync(ct);
+                    if (detected != null && detected != _model)
+                    {
+                        onStatus?.Invoke($"⚠ HTTP 400 — model mismatch. Auto-detected '{detected}', retrying…");
+                        _model = detected;
+                        await DelayBeforeRetry(attempt, ct);
+                        continue;
+                    }
+                    var body = await response.Content.ReadAsStringAsync(ct);
+                    onStatus?.Invoke($"✗ HTTP 400 — giving up. Body: {(body.Length > 200 ? body[..200] : body)}");
+                    throw new HttpRequestException("LM Studio returned HTTP 400 — check model name");
+                }
+
                 if (!response.IsSuccessStatusCode)
                 {
                     onStatus?.Invoke($"✗ HTTP {(int)response.StatusCode} — giving up");
-                    return new LlmResult($"(LM Studio returned HTTP {(int)response.StatusCode})", null);
+                    throw new HttpRequestException($"LM Studio returned HTTP {(int)response.StatusCode}");
                 }
 
                 ChatResponse? json;
@@ -111,6 +127,18 @@ public class LmStudioLlmClient : ILlmClient
         throw lastException ?? new InvalidOperationException("LM Studio request failed after all retries");
     }
 
+    private async Task<string?> TryDetectModelAsync(CancellationToken ct)
+    {
+        try
+        {
+            var uri = new Uri(_endpoint);
+            var modelsUrl = $"{uri.Scheme}://{uri.Authority}/v1/models";
+            var resp = await _http.GetFromJsonAsync<ModelsResponse>(modelsUrl, ct);
+            return resp?.Data?.FirstOrDefault()?.Id;
+        }
+        catch { return null; }
+    }
+
     public async Task WarmUpAsync(CancellationToken ct = default, Action<string>? onStatus = null)
     {
         onStatus?.Invoke("→ Sending warm-up ping to LM Studio...");
@@ -148,6 +176,15 @@ public class LmStudioLlmClient : ILlmClient
             try { await Task.Delay(RetryDelays[attempt], ct); }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         }
+    }
+
+    private sealed class ModelsResponse
+    {
+        [JsonPropertyName("data")] public List<ModelData>? Data { get; init; }
+    }
+    private sealed class ModelData
+    {
+        [JsonPropertyName("id")] public string? Id { get; init; }
     }
 
     private sealed class ChatResponse

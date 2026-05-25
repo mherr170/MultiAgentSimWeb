@@ -218,6 +218,19 @@ textarea:disabled, input:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 .lmstudio-field:first-child { flex: 1 1 320px; }
 .lmstudio-field:last-child  { flex: 1 1 160px; }
+.btn-detect-model {
+    padding: 0.35rem 0.6rem;
+    font-size: 0.75rem;
+    background: #16163a;
+    border: 1px solid #33335a;
+    border-radius: 5px;
+    color: #8888cc;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s;
+}
+.btn-detect-model:hover:not(:disabled) { background: #22225a; color: #aaaaee; }
+.btn-detect-model:disabled { opacity: 0.4; cursor: not-allowed; }
 .lmstudio-field input {
     text-transform: none;
     letter-spacing: normal;
@@ -663,8 +676,9 @@ textarea:disabled, input:disabled { opacity: 0.45; cursor: not-allowed; }
     transition: width 0.5s ease;
 }
 
-.inv-meter-fill.hunger { background: #ea580c; }
-.inv-meter-fill.thirst { background: #0ea5e9; }
+.inv-meter-fill.hunger  { background: #ea580c; }
+.inv-meter-fill.thirst  { background: #0ea5e9; }
+.inv-meter-fill.stamina { background: #a3e635; }
 
 /* danger zone — low meter values turn red */
 .inv-meter-fill.hunger[style*="width: 3"],
@@ -672,7 +686,8 @@ textarea:disabled, input:disabled { opacity: 0.45; cursor: not-allowed; }
 .inv-meter-fill.hunger[style*="width: 1"],
 .inv-meter-fill.thirst[style*="width: 3"],
 .inv-meter-fill.thirst[style*="width: 2"],
-.inv-meter-fill.thirst[style*="width: 1"] { background: #ef4444; }
+.inv-meter-fill.thirst[style*="width: 1"],
+.inv-meter-fill.stamina[style*="width: 1"] { background: #ef4444; }
 
 .inv-meter-value {
     color: #3a3a55;
@@ -1150,6 +1165,13 @@ textarea:disabled, input:disabled { opacity: 0.45; cursor: not-allowed; }
 .event.forage .event-label, .event.scavenge .event-label, .event.drink_tap .event-label   { color: #38bdf8; }
 .event.forage .event-content, .event.scavenge .event-content, .event.drink_tap .event-content { color: #38bdf8; font-style: italic; }
 
+.event.direct_message {
+    border-left-color: #818cf8;
+    padding-left: 1.25rem;
+}
+.event.direct_message .event-label   { color: #818cf8; }
+.event.direct_message .event-content { color: #c7d2fe; }
+
 .event.direct_response {
     border-left-color: #a855f7;
     padding-left: 1.25rem;
@@ -1235,6 +1257,18 @@ textarea:disabled, input:disabled { opacity: 0.45; cursor: not-allowed; }
     margin-top: 3px;
     border-top: 1px solid #2a2a40;
     padding-top: 3px;
+}
+
+/* ── Map: active-agent pulse ring ───────────────────────── */
+@keyframes agent-active-pulse {
+    0%, 100% { opacity: 0.85; transform: scale(1.0); }
+    50%       { opacity: 0.15; transform: scale(1.6); }
+}
+.agent-active-ring {
+    transform-box:    fill-box;
+    transform-origin: center;
+    animation: agent-active-pulse 1.4s ease-in-out infinite;
+    pointer-events: none;
 }
 
 /* ── Agent memory inspector drawer ──────────────────────── */

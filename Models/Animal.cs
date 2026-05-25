@@ -37,6 +37,7 @@ public class Animal
 
     public float AttackHungerDamage { get; init; }
     public float AttackThirstDamage { get; init; }
+    public float AttackHealthDamage { get; init; }
     public float AttackMoodDelta    { get; init; }
     public float AttackStressDelta  { get; init; }
 

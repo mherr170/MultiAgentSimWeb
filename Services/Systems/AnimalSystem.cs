@@ -35,7 +35,11 @@ public class AnimalSystem : IAnimalSystem
 
     public void InitializeAnimals()
     {
-        var (sx, sy) = MapGrid.DefaultStartPosition;
+        // Distance from the nearest agent start position (Chebyshev), not just the default one.
+        // This prevents large predators from spawning adjacent to any agent at sim start.
+        int DistToNearestStart(int px, int py) =>
+            MapGrid.AgentStartPositions.Min(s =>
+                Math.Max(Math.Abs(px - s.x), Math.Abs(py - s.y)));
 
         var smallEligible = new List<(int x, int y)>();
         var largeEligible = new List<(int x, int y)>();
@@ -45,16 +49,17 @@ public class AnimalSystem : IAnimalSystem
             for (int x = 0; x < _world.MapWidth; x++)
             {
                 var terrain = _world.GetCell(x, y).Terrain;
-                int dist = Math.Max(Math.Abs(x - sx), Math.Abs(y - sy));
+                int dist = DistToNearestStart(x, y);
 
-                // Small animals on streets, park, and forest
-                if ((terrain == TerrainType.Street || terrain == TerrainType.Park || terrain == TerrainType.Forest) && dist >= 3)
+                // Small animals on streets, park, and forest — keep at least 2 cells away
+                if ((terrain == TerrainType.Street || terrain == TerrainType.Park || terrain == TerrainType.Forest) && dist >= 2)
                     smallEligible.Add((x, y));
 
-                // Feral dogs patrol streets; deer roam the forest
-                if (terrain == TerrainType.Street && dist >= 5)
+                // Feral dogs patrol streets — must be at least 8 cells from the nearest spawn
+                if (terrain == TerrainType.Street && dist >= 8)
                     largeEligible.Add((x, y));
-                if (terrain == TerrainType.Forest)
+                // Forest deer are fine near the forest start (Greenwood is intentionally remote)
+                if (terrain == TerrainType.Forest && dist >= 4)
                     largeEligible.Add((x, y));
             }
         }
@@ -63,8 +68,10 @@ public class AnimalSystem : IAnimalSystem
         Shuffle(largeEligible);
 
         // Small animals: city types for streets/parks, Fox for forest
-        AnimalType[] citySmall   = [AnimalType.Rat, AnimalType.Pigeon, AnimalType.Squirrel, AnimalType.StreetCat];
+        // citySmallIdx tracks rotation through city pool independently of forest spawns
+        AnimalType[] citySmall = [AnimalType.Rat, AnimalType.Pigeon, AnimalType.Squirrel, AnimalType.StreetCat];
         int smallSpawned = 0;
+        int citySmallIdx = 0;
         foreach (var (x, y) in smallEligible)
         {
             if (smallSpawned >= 12) break;
@@ -72,21 +79,29 @@ public class AnimalSystem : IAnimalSystem
             if (terrain == TerrainType.Forest)
                 SpawnAnimal(AnimalType.Fox, x, y);
             else
-                SpawnAnimal(citySmall[smallSpawned % citySmall.Length], x, y);
+            {
+                SpawnAnimal(citySmall[citySmallIdx % citySmall.Length], x, y);
+                citySmallIdx++;
+            }
             smallSpawned++;
         }
 
         // Large animals: dogs for streets, Deer for forest
+        // Cap at 4 (was 6) — fewer apex predators makes early survival viable
         AnimalType[] streetLarge = [AnimalType.DogPack, AnimalType.Rottweiler, AnimalType.PitBull, AnimalType.Coyote];
         int largeSpawned = 0;
+        int streetLargeIdx = 0;
         foreach (var (x, y) in largeEligible)
         {
-            if (largeSpawned >= 6) break;
+            if (largeSpawned >= 4) break;
             var terrain = _world.GetCell(x, y).Terrain;
             if (terrain == TerrainType.Forest)
                 SpawnAnimal(AnimalType.Deer, x, y);
             else
-                SpawnAnimal(streetLarge[largeSpawned % streetLarge.Length], x, y);
+            {
+                SpawnAnimal(streetLarge[streetLargeIdx % streetLarge.Length], x, y);
+                streetLargeIdx++;
+            }
             largeSpawned++;
         }
     }
@@ -96,24 +111,25 @@ public class AnimalSystem : IAnimalSystem
         var tpl = AnimalDefinitions.Get(type);
         var animal = new Animal
         {
-            Type               = type,
-            Size               = tpl.Size,
-            X                  = x,
-            Y                  = y,
-            Health             = tpl.MaxHealth,
-            MaxHealth          = tpl.MaxHealth,
-            DetectRadius       = tpl.DetectRadius,
-            AttackRadius       = tpl.AttackRadius,
-            FleeThreshold      = tpl.FleeThreshold,
-            AttackHungerDamage = tpl.AttackHungerDamage,
-            AttackThirstDamage = tpl.AttackThirstDamage,
-            AttackMoodDelta    = tpl.AttackMoodDelta,
-            AttackStressDelta  = tpl.AttackStressDelta,
-            ScareChance        = tpl.ScareChance,
-            LootTable          = tpl.LootTable,
-            LootChance         = tpl.LootChance,
-            DisplayName        = tpl.DisplayName,
-            Description        = tpl.Description,
+            Type                = type,
+            Size                = tpl.Size,
+            X                   = x,
+            Y                   = y,
+            Health              = tpl.MaxHealth,
+            MaxHealth           = tpl.MaxHealth,
+            DetectRadius        = tpl.DetectRadius,
+            AttackRadius        = tpl.AttackRadius,
+            FleeThreshold       = tpl.FleeThreshold,
+            AttackHungerDamage  = tpl.AttackHungerDamage,
+            AttackThirstDamage  = tpl.AttackThirstDamage,
+            AttackHealthDamage  = tpl.AttackHealthDamage,
+            AttackMoodDelta     = tpl.AttackMoodDelta,
+            AttackStressDelta   = tpl.AttackStressDelta,
+            ScareChance         = tpl.ScareChance,
+            LootTable           = tpl.LootTable,
+            LootChance          = tpl.LootChance,
+            DisplayName         = tpl.DisplayName,
+            Description         = tpl.Description,
         };
         _animals.Add(animal);
     }
@@ -148,7 +164,7 @@ public class AnimalSystem : IAnimalSystem
         animal.RoundsInCurrentState++;
 
         if (_rng.NextDouble() < 0.40)
-            WanderAnimal(animal, largeOnly: false);
+            WanderAnimal(animal);
 
         // Check if the animal's current cell has an armed trap
         var trap = _world.Items.TakeTopTrapAt(animal.X, animal.Y);
@@ -177,25 +193,45 @@ public class AnimalSystem : IAnimalSystem
 
     private void TickLargeAnimal(Animal animal)
     {
-        if (animal.Health < animal.MaxHealth * 0.25f)
+        // Heavy rain / thunderstorm: large animals hunker down — they don't hunt or pursue prey.
+        if (_world.Weather.SuppressesLargeAnimals)
+        {
+            animal.State = AnimalState.Idle;
+            return;
+        }
+
+        // FleeThreshold is an absolute HP value: 0 = never flee (dogs), 100+ = always flee (deer)
+        if (animal.Health < animal.FleeThreshold)
         {
             animal.State = AnimalState.Fleeing;
-            WanderAnimal(animal, largeOnly: true);
+            WanderAnimal(animal);
             return;
         }
 
         var tpl = AnimalDefinitions.Get(animal.Type);
+
+        // Night: predators gain +2 detect radius (sharper senses in the dark)
+        // Light sources make the bearer detectable at +1 extra distance
+        int nightBonus = _world.IsNight ? 2 : 0;
 
         // Gather all prey within detect radius: small animals and agents alike
         int Dist(int ax, int ay) => Math.Max(Math.Abs(ax - animal.X), Math.Abs(ay - animal.Y));
 
         var nearestSmallAnimal = _animals
             .Where(a => a != animal && a.Size == AnimalSize.Small && a.State != AnimalState.Dead &&
-                        Dist(a.X, a.Y) <= animal.DetectRadius)
+                        Dist(a.X, a.Y) <= animal.DetectRadius + nightBonus)
             .OrderBy(a => Dist(a.X, a.Y))
             .FirstOrDefault();
 
-        var nearestAgent = _world.GetAgentsInRadius(animal.X, animal.Y, animal.DetectRadius)
+        // Per-agent detect radius: light source carriers stand out an extra cell at night
+        int AgentDetectRadius(string name)
+        {
+            int lightBonus = (_world.IsNight && _world.DayNight.HasLightSource(name)) ? 1 : 0;
+            return animal.DetectRadius + nightBonus + lightBonus;
+        }
+
+        var nearestAgent = _world.GetAgentsInRadius(animal.X, animal.Y, animal.DetectRadius + nightBonus + 1)
+            .Where(a => Dist(a.x, a.y) <= AgentDetectRadius(a.name))
             .Where(a => _world.GetAgentPosition(a.name).x >= 0)
             .OrderBy(a => Dist(a.x, a.y))
             .Cast<(string name, int x, int y)?>()
@@ -233,9 +269,12 @@ public class AnimalSystem : IAnimalSystem
                 }
                 else
                 {
-                    MoveToward(animal, preyX, preyY, largeOnly: true);
-                    _world.LogAt(animal.X, animal.Y,
-                        $"A {tpl.DisplayName} moves through the streets.");
+                    MoveToward(animal, preyX, preyY);
+                    var moveTerrain = _world.GetCell(animal.X, animal.Y).Terrain;
+                    string moveDesc = moveTerrain == TerrainType.Forest
+                        ? "moves through the forest"
+                        : "moves through the streets";
+                    _world.LogAt(animal.X, animal.Y, $"A {tpl.DisplayName} {moveDesc}.");
                 }
             }
             else
@@ -255,7 +294,7 @@ public class AnimalSystem : IAnimalSystem
                 }
                 else
                 {
-                    MoveToward(animal, preyX, preyY, largeOnly: true);
+                    MoveToward(animal, preyX, preyY);
                 }
             }
         }
@@ -263,8 +302,10 @@ public class AnimalSystem : IAnimalSystem
         {
             animal.State = AnimalState.Idle;
             animal.RoundsInCurrentState++;
-            if (_rng.NextDouble() < 0.50)
-                WanderAnimal(animal, largeOnly: true);
+            // At night, large predators roam more aggressively instead of sitting idle
+            float wanderChance = _world.IsNight ? 0.85f : 0.50f;
+            if (_rng.NextDouble() < wanderChance)
+                WanderAnimal(animal);
         }
     }
 
@@ -273,24 +314,40 @@ public class AnimalSystem : IAnimalSystem
         var tpl = AnimalDefinitions.Get(animal.Type);
         _world.Survival.AddHunger(agentName, -tpl.AttackHungerDamage);
         _world.Survival.AddThirst(agentName, -tpl.AttackThirstDamage);
+        if (tpl.AttackHealthDamage > 0)
+            _world.Survival.AddHealth(agentName, -tpl.AttackHealthDamage);
+        var victim = _world.GetPersonality(agentName);
+        // risk_taker and combat_veteran take hits in stride — halved stress from attacks
+        float stressMult = (victim.HasFlag("risk_taker") || victim.IsCombatVeteran) ? 0.5f : 1.0f;
         _world.Mood.GetMood(agentName).AdjustMood(tpl.AttackMoodDelta);
-        _world.Mood.GetMood(agentName).AdjustStress(tpl.AttackStressDelta);
+        _world.Mood.GetMood(agentName).AdjustStress(tpl.AttackStressDelta * stressMult);
+        if (stressMult < 1f)
+            _world.LogDev($"[{agentName}] {(victim.HasFlag("risk_taker") ? "risk_taker" : "combat_veteran")} — halved attack stress");
 
+        // prone_to_panic: animal attacks trigger a secondary panic stress spike
+        if (victim.HasFlag("prone_to_panic"))
+        {
+            float panicStress = tpl.AttackStressDelta * 0.5f;
+            _world.Mood.GetMood(agentName).AdjustStress(panicStress);
+            _world.LogDev($"[{agentName}] prone_to_panic → extra stress +{panicStress:F1}");
+        }
+
+        string healthNote = tpl.AttackHealthDamage > 0 ? $", -{tpl.AttackHealthDamage:F0} health" : "";
         _world.LogAt(animal.X, animal.Y,
             $"A {tpl.DisplayName} attacks {agentName}! " +
-            $"(-{tpl.AttackHungerDamage:F0} hunger, -{tpl.AttackThirstDamage:F0} thirst)");
+            $"(-{tpl.AttackHungerDamage:F0} hunger, -{tpl.AttackThirstDamage:F0} thirst{healthNote})");
         _world.LogDev($"[animal] {tpl.DisplayName} attacked {agentName} → " +
             $"hunger -{tpl.AttackHungerDamage}  thirst -{tpl.AttackThirstDamage}  " +
-            $"mood {tpl.AttackMoodDelta}  stress +{tpl.AttackStressDelta}");
+            $"health -{tpl.AttackHealthDamage}  mood {tpl.AttackMoodDelta}  stress +{tpl.AttackStressDelta}");
         _world.Memory.AddMemory(agentName,
-            $"A {tpl.DisplayName} attacked me! Lost hunger and thirst from the injury.");
+            $"A {tpl.DisplayName} attacked me! Lost hunger, thirst{(tpl.AttackHealthDamage > 0 ? ", and health" : "")} from the injury.");
 
         _events.Add(new SimEvent
         {
             Type      = "animal_attack",
             AgentName = tpl.DisplayName,
             Label     = "attacks",
-            Content   = $"{tpl.DisplayName} attacks {agentName}! (-{tpl.AttackHungerDamage:F0} hunger, -{tpl.AttackThirstDamage:F0} thirst)"
+            Content   = $"{tpl.DisplayName} attacks {agentName}! (-{tpl.AttackHungerDamage:F0} hunger, -{tpl.AttackThirstDamage:F0} thirst{healthNote})"
         });
 
         // Witnesses within 2 cells react
@@ -328,23 +385,32 @@ public class AnimalSystem : IAnimalSystem
             a.State != AnimalState.Dead);
         if (animal == null) return null;
 
-        var tpl         = AnimalDefinitions.Get(animal.Type);
-        float weapon    = _world.Items.GetWeaponBonus(agentName);
-        float baseDmg   = animal.Size == AnimalSize.Large
+        var tpl          = AnimalDefinitions.Get(animal.Type);
+        var personality  = _world.GetPersonality(agentName);
+        float weapon     = _world.Items.GetWeaponBonus(agentName);
+        float aggBonus   = personality.AggressionAttackBonus;
+        float riskBonus  = personality.HasFlag("risk_taker") ? 5f : 0f;
+        float vetBonus   = personality.IsCombatVeteran ? 8f : 0f;
+        float baseDmg    = animal.Size == AnimalSize.Large
             ? (float)(_rng.Next(1, 21) + 5)    // 6–25
             : (float)(_rng.Next(1, 11) + 10);   // 11–20
-        float damage    = baseDmg + weapon;
+        float damage     = baseDmg + weapon + aggBonus + riskBonus + vetBonus;
 
         animal.Health -= damage;
-        string weaponNote = weapon > 0 ? $" (+{weapon:F0} weapon bonus)" : "";
-        _world.LogAt(pos.x, pos.y, $"{agentName} attacks the {tpl.DisplayName} for {damage:F0} damage{weaponNote}!");
+        string aggNote    = aggBonus != 0  ? $" ({(aggBonus > 0 ? "+" : "")}{aggBonus:F0} aggression)" : "";
+        string weaponNote = weapon   > 0   ? $" (+{weapon:F0} weapon)"          : "";
+        string riskNote   = riskBonus > 0  ? " [risk taker]"                    : "";
+        string vetNote    = vetBonus  > 0  ? " [combat veteran]"                : "";
+        _world.LogAt(pos.x, pos.y, $"{agentName} attacks the {tpl.DisplayName} for {damage:F0} damage{weaponNote}{aggNote}{riskNote}{vetNote}!");
         _world.Memory.AddMemory(agentName, $"Attacked a {tpl.DisplayName} at ({pos.x},{pos.y}).");
 
         if (animal.Health <= 0)
         {
             animal.State = AnimalState.Dead;
             _world.Memory.AddMemory(agentName, $"Killed a {tpl.DisplayName}! Loot should drop nearby.");
-            _world.Mood.GetMood(agentName).AdjustMood(animal.Size == AnimalSize.Large ? +20f : +8f);
+            float killMoodBase = animal.Size == AnimalSize.Large ? +20f : +8f;
+            float killMoodBonus = personality.HasFlag("risk_taker") ? +5f : 0f;
+            _world.Mood.GetMood(agentName).AdjustMood(killMoodBase + killMoodBonus);
             _world.Mood.GetMood(agentName).AdjustStress(animal.Size == AnimalSize.Large ? -10f : -3f);
             return $"kills the {tpl.DisplayName}";
         }
@@ -418,16 +484,31 @@ public class AnimalSystem : IAnimalSystem
         }
 
         var tpl = AnimalDefinitions.Get(animal.Type);
+        var scarePersonality = _world.GetPersonality(agentName);
 
-        if (_rng.NextDouble() < tpl.ScareChance)
+        // animal_handler: +20% scare chance and no counter-attack on failed scare
+        float scareBonus  = scarePersonality.IsAnimalHandler ? 0.20f : 0f;
+        bool  safeFailure = scarePersonality.IsAnimalHandler;
+
+        if (_rng.NextDouble() < tpl.ScareChance + scareBonus)
         {
             animal.State = AnimalState.Fleeing;
-            MoveAwayFrom(animal, pos.x, pos.y, largeOnly: true);
-            MoveAwayFrom(animal, pos.x, pos.y, largeOnly: true);
+            MoveAwayFrom(animal, pos.x, pos.y);
+            MoveAwayFrom(animal, pos.x, pos.y);
             _world.Memory.AddMemory(agentName, $"Scared off a {tpl.DisplayName}!");
             _world.Mood.GetMood(agentName).AdjustMood(+12f);
             _world.Mood.GetMood(agentName).AdjustStress(-8f);
-            return $"scares off the {tpl.DisplayName} — it retreats!";
+            string handlerNote = scareBonus > 0 ? " [animal handler]" : "";
+            return $"scares off the {tpl.DisplayName} — it retreats!{handlerNote}";
+        }
+        else if (safeFailure)
+        {
+            // Animal handler reads the animal — backs off safely when the scare fails
+            animal.State = AnimalState.Idle;
+            _world.Memory.AddMemory(agentName, $"Tried to scare a {tpl.DisplayName} — couldn't intimidate it, but backed off safely.");
+            _world.Mood.GetMood(agentName).AdjustMood(-2f);
+            _world.LogDev($"[{agentName}] animal_handler safe failure — no counter-attack");
+            return $"fails to scare the {tpl.DisplayName} — backs off carefully [animal handler]";
         }
         else
         {
@@ -442,7 +523,7 @@ public class AnimalSystem : IAnimalSystem
 
     // ── Movement helpers ─────────────────────────────────────────────────────
 
-    private void MoveToward(Animal animal, int tx, int ty, bool largeOnly)
+    private void MoveToward(Animal animal, int tx, int ty)
     {
         int dx = Math.Sign(tx - animal.X);
         int dy = Math.Sign(ty - animal.Y);
@@ -467,7 +548,7 @@ public class AnimalSystem : IAnimalSystem
 
         foreach (var (nx, ny) in candidates)
         {
-            if (IsValidMove(nx, ny, largeOnly))
+            if (IsValidMove(nx, ny, animal))
             {
                 animal.X = nx;
                 animal.Y = ny;
@@ -476,7 +557,7 @@ public class AnimalSystem : IAnimalSystem
         }
     }
 
-    private void MoveAwayFrom(Animal animal, int fx, int fy, bool largeOnly)
+    private void MoveAwayFrom(Animal animal, int fx, int fy)
     {
         int dx = Math.Sign(animal.X - fx);
         int dy = Math.Sign(animal.Y - fy);
@@ -495,7 +576,7 @@ public class AnimalSystem : IAnimalSystem
 
         foreach (var (nx, ny) in candidates)
         {
-            if (IsValidMove(nx, ny, largeOnly))
+            if (IsValidMove(nx, ny, animal))
             {
                 animal.X = nx;
                 animal.Y = ny;
@@ -504,10 +585,10 @@ public class AnimalSystem : IAnimalSystem
         }
 
         // Fallback: random adjacent
-        WanderAnimal(animal, largeOnly);
+        WanderAnimal(animal);
     }
 
-    private void WanderAnimal(Animal animal, bool largeOnly)
+    private void WanderAnimal(Animal animal)
     {
         (int dx, int dy)[] dirs = [(0, -1), (0, 1), (1, 0), (-1, 0)];
         var shuffled = dirs.OrderBy(_ => _rng.Next()).ToArray();
@@ -516,7 +597,7 @@ public class AnimalSystem : IAnimalSystem
         {
             int nx = animal.X + dx;
             int ny = animal.Y + dy;
-            if (IsValidMove(nx, ny, largeOnly))
+            if (IsValidMove(nx, ny, animal))
             {
                 animal.X = nx;
                 animal.Y = ny;
@@ -525,17 +606,24 @@ public class AnimalSystem : IAnimalSystem
         }
     }
 
-    private bool IsValidMove(int nx, int ny, bool largeOnly)
+    /// <summary>
+    /// Validates a candidate move cell for the given animal.
+    /// Small animals can move anywhere on the map.
+    /// Large animals are terrain-restricted by type:
+    ///   Deer  → Forest or Park (woodland animal)
+    ///   Dogs  → Street or Park (urban predators)
+    /// </summary>
+    private bool IsValidMove(int nx, int ny, Animal animal)
     {
         if (!_world.IsInBounds(nx, ny)) return false;
         var terrain = _world.GetCell(nx, ny).Terrain;
-        if (largeOnly)
-            return terrain == TerrainType.Street || terrain == TerrainType.Park;
-        // Small animals can go anywhere — rats and pigeons fit everywhere
-        return true;
+        if (animal.Size == AnimalSize.Small) return true;
+        // Large forest animal: roams Forest and Park
+        if (animal.Type == AnimalType.Deer)
+            return terrain == TerrainType.Forest || terrain == TerrainType.Park;
+        // Large urban animals: roam Street and Park
+        return terrain == TerrainType.Street || terrain == TerrainType.Park;
     }
-
-    // ── Utilities ────────────────────────────────────────────────────────────
 
     // ── Respawn ──────────────────────────────────────────────────────────────
 
@@ -574,7 +662,7 @@ public class AnimalSystem : IAnimalSystem
 
         if (smallCount < 5 && smallEligible.Count > 0)
         {
-            AnimalType[] cityPool   = [AnimalType.Rat, AnimalType.Pigeon, AnimalType.Squirrel, AnimalType.StreetCat];
+            AnimalType[] cityPool = [AnimalType.Rat, AnimalType.Pigeon, AnimalType.Squirrel, AnimalType.StreetCat];
             int toSpawn = Math.Min(2, smallEligible.Count);
             for (int i = 0; i < toSpawn; i++)
             {
