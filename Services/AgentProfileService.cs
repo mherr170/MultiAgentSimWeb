@@ -18,6 +18,9 @@ public class AgentProfileService
         Profiles = File.Exists(path) ? Parse(File.ReadAllText(path)) : new AgentProfiles();
     }
 
+    public static AgentProfiles LoadFromFile(string path) =>
+        File.Exists(path) ? Parse(File.ReadAllText(path)) : new AgentProfiles();
+
     private static AgentProfiles Parse(string markdown)
     {
         var situation = new System.Text.StringBuilder();

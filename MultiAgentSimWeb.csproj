@@ -16,6 +16,10 @@
     <Content Remove="MultiAgentSimWebTests\**" />
     <EmbeddedResource Remove="MultiAgentSimWebTests\**" />
     <None Remove="MultiAgentSimWebTests\**" />
+    <Compile Remove="SimHarness\**" />
+    <Content Remove="SimHarness\**" />
+    <EmbeddedResource Remove="SimHarness\**" />
+    <None Remove="SimHarness\**" />
   </ItemGroup>
 
   <ItemGroup>
