@@ -4,7 +4,10 @@ namespace MultiAgentSimWeb.Services.Systems;
 
 public class MoodSystem : IMoodSystem
 {
-    private readonly Dictionary<string, AgentMood> _moods = new();
+    private readonly Dictionary<string, AgentMood> _moods    = new();
+    // Agents moved here on death; GetMood() returns last-known state for read-only display.
+    // Has() excludes this pool so no post-death mutations reach dead agents.
+    private readonly Dictionary<string, AgentMood> _deadPool = new();
     private WorldState _world = null!;
 
     public void Attach(WorldState world) => _world = world;
@@ -12,12 +15,18 @@ public class MoodSystem : IMoodSystem
     public void InitializeAgent(string agentName) =>
         _moods[agentName] = new AgentMood();
 
-    public void RemoveAgent(string agentName) => _moods.Remove(agentName);
+    public void RemoveAgent(string agentName)
+    {
+        if (_moods.Remove(agentName, out var last))
+            _deadPool[agentName] = last;
+    }
 
     public bool Has(string agentName) => _moods.ContainsKey(agentName);
 
     public AgentMood GetMood(string agentName) =>
-        _moods.TryGetValue(agentName, out var m) ? m : new AgentMood();
+        _moods.TryGetValue(agentName, out var m)    ? m :
+        _deadPool.TryGetValue(agentName, out var d) ? d :
+        new AgentMood();
 
     public void TickMood(string agentName)
     {
@@ -92,21 +101,24 @@ public class MoodSystem : IMoodSystem
             float moodHit   = -3f * p.MoodPenaltyMultiplier;
             float stressHit = +8f * p.StressMultiplier;
             mood.AdjustMood(moodHit); mood.AdjustStress(stressHit);
-            _world.LogDev($"[{agentName}] hunger critical => mood {moodHit:+0.0;-0.0}  stress {stressHit:+0.0}");
+            mood.AdjustTrauma(+2f);
+            _world.LogDev($"[{agentName}] hunger critical => mood {moodHit:+0.0;-0.0}  stress {stressHit:+0.0}  trauma +2");
         }
         if (thirst < 20f)
         {
             float moodHit   = -3f * p.MoodPenaltyMultiplier;
             float stressHit = +10f * p.StressMultiplier;
             mood.AdjustMood(moodHit); mood.AdjustStress(stressHit);
-            _world.LogDev($"[{agentName}] thirst critical => mood {moodHit:+0.0;-0.0}  stress {stressHit:+0.0}");
+            mood.AdjustTrauma(+2f);
+            _world.LogDev($"[{agentName}] thirst critical => mood {moodHit:+0.0;-0.0}  stress {stressHit:+0.0}  trauma +2");
         }
         if (_world.Survival.IsHealthCritical(agentName))
         {
             float moodHit   = -2f * p.MoodPenaltyMultiplier;
             float stressHit = +6f * p.StressMultiplier;
             mood.AdjustMood(moodHit); mood.AdjustStress(stressHit);
-            _world.LogDev($"[{agentName}] health critical => mood {moodHit:+0.0;-0.0}  stress {stressHit:+0.0}");
+            mood.AdjustTrauma(+3f);
+            _world.LogDev($"[{agentName}] health critical => mood {moodHit:+0.0;-0.0}  stress {stressHit:+0.0}  trauma +3");
         }
 
         // Isolation / company
@@ -136,7 +148,8 @@ public class MoodSystem : IMoodSystem
                 {
                     mood.AdjustMood(+4f);
                     mood.AdjustStress(-3f);
-                    _world.LogDev($"[{agentName}] romantic partner {otherName} nearby => mood +4  stress -3");
+                    mood.AdjustHope(+3f);
+                    _world.LogDev($"[{agentName}] romantic partner {otherName} nearby => mood +4  stress -3  hope +3");
                 }
                 else if (trust > 70f)
                 {
@@ -171,7 +184,20 @@ public class MoodSystem : IMoodSystem
             }
         }
 
+        // Hope from sustained good states (checked each tick, before decay)
+        if (hunger > 65f && thirst > 65f)
+        {
+            mood.AdjustHope(+2f);
+            _world.LogDev($"[{agentName}] well-provisioned => hope +2");
+        }
+        if (_world.Groups.GetGroup(agentName) != null)
+        {
+            mood.AdjustHope(+2f);
+            _world.LogDev($"[{agentName}] in group => hope +2");
+        }
+
         float m0 = mood.Mood, s0 = mood.Stress;
+        float trauma0 = mood.Trauma, hope0 = mood.Hope;
         mood.Decay();
 
         // Resilience bonus
@@ -189,14 +215,80 @@ public class MoodSystem : IMoodSystem
             _world.LogDev($"[{agentName}] survivor_grit stress bonus => -2");
         }
 
-        // Optimism floor
-        float moodFloor = p.InitialMoodOffset * 0.4f;
-        if (mood.Mood < moodFloor)
+        // ── Long-term morale floor ────────────────────────────────────────────
+        // Trauma lowers the floor; hope raises it; personality provides the baseline.
+        float traumaPenalty = mood.Trauma * 0.15f;   // -0 to -15 on mood floor
+        float hopeBonus     = mood.Hope   * 0.12f;   // +0 to +12 on mood floor
+        float longTermFloor = p.InitialMoodOffset * 0.4f - traumaPenalty + hopeBonus;
+        if (mood.Mood < longTermFloor)
         {
-            float lift = Math.Min(1f, moodFloor - mood.Mood);
+            float lift = Math.Min(1f, longTermFloor - mood.Mood);
             mood.AdjustMood(lift);
         }
 
-        _world.LogDev($"[{agentName}] decay => mood {m0:+0;-0;0}->{mood.Mood:+0;-0;0}  stress {s0:F0}->{mood.Stress:F0}");
+        // Trauma: chronic anxiety — stress never fully drains when heavily traumatised
+        if (mood.Trauma > 40f)
+        {
+            float stressFloor = (mood.Trauma - 40f) / 4f;   // 0 → 15 at max trauma
+            if (mood.Stress < stressFloor)
+                mood.AdjustStress(stressFloor - mood.Stress);
+        }
+        // Extreme trauma adds a tick of stress each round (can't shake it)
+        if (mood.Trauma > 70f)
+        {
+            mood.AdjustStress(+1f);
+            _world.LogDev($"[{agentName}] trauma {mood.Trauma:F0} => chronic stress +1");
+        }
+
+        // Hope: settled confidence — extra stress relief above 50
+        if (mood.Hope > 50f)
+        {
+            float relief = (mood.Hope - 50f) / 50f;   // 0.0 → 1.0
+            mood.AdjustStress(-relief);
+            _world.LogDev($"[{agentName}] hope {mood.Hope:F0} => settled relief -{relief:F2}");
+        }
+
+        _world.LogDev($"[{agentName}] decay => mood {m0:+0;-0;0}->{mood.Mood:+0;-0;0}  stress {s0:F0}->{mood.Stress:F0}" +
+                      $"  trauma {trauma0:F0}->{mood.Trauma:F0}  hope {hope0:F0}->{mood.Hope:F0}");
+    }
+
+    public void ProcessDeath(string deceasedName)
+    {
+        // Grief: surviving agents who had positive trust in the deceased react emotionally.
+        // Agents within radius 2 of the death cell are skipped — KillAgent's witness sweep
+        // already applied a proximity-based hit to them, so adding trust-grief on top would
+        // double-penalise nearby survivors.
+        var deathPos = _world.GetAgentPosition(deceasedName);
+
+        foreach (var survivor in _world.AgentNames)
+        {
+            if (survivor == deceasedName) continue;
+            if (!_moods.TryGetValue(survivor, out var mood)) continue;
+
+            float trust = mood.GetTrust(deceasedName);
+            if (trust <= 0f) continue; // indifferent or hostile — no grief
+
+            // Skip if within proximity of the death cell (already handled).
+            var (sx, sy) = _world.GetAgentPosition(survivor);
+            if (deathPos.x >= 0 && sx >= 0 &&
+                Math.Max(Math.Abs(sx - deathPos.x), Math.Abs(sy - deathPos.y)) <= 2)
+                continue;
+
+            float moodHit   = trust > 70f ? -20f
+                            : trust > 50f ? -14f
+                            : trust > 20f ?  -8f
+                            :                -4f;
+            float stressHit = trust > 70f ? +18f
+                            : trust > 50f ? +12f
+                            : trust > 20f ?  +7f
+                            :                +3f;
+
+            mood.AdjustMood(moodHit);
+            mood.AdjustStress(stressHit);
+            _world.Memory.AddMemory(survivor, $"{deceasedName} has died. I knew them.");
+            _world.LogDev(
+                $"[{survivor}] grief for {deceasedName} → mood {moodHit:+0;-0}  stress {stressHit:+0;-0}" +
+                $"  (trust was {trust:F0}, distant grief)");
+        }
     }
 }

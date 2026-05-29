@@ -37,6 +37,15 @@ public static class ItemRegistry
             HungerRestore = 5f, ThirstRestore = 20f, MoodDelta = 5f, StressDelta = 8f,
             IsDeconstructable = false
         },
+        ["caffeine_pills"] = new ItemDefinition
+        {
+            Id = "caffeine_pills", Name = "Caffeine Pills",
+            Description = "A small bottle of 200mg caffeine tablets — 8 left. Truckers, students, night-shift workers. The world is full of people who needed to stay awake. 8 uses.",
+            IsUsable = true, UseEffect = "You wash one down dry. Within minutes your heartbeat is audible and the fatigue is somewhere behind a wall of focus. It will come back.",
+            ThirstRestore = -8f, MoodDelta = 16f, StressDelta = 12f,
+            MaxUses = 8,
+            IsDeconstructable = false
+        },
 
         // ── Food ─────────────────────────────────────────────────────────────
         ["canned_food"] = new ItemDefinition
@@ -289,6 +298,32 @@ public static class ItemRegistry
             IsDeconstructable = false
         },
 
+        ["glow_stick"] = new ItemDefinition
+        {
+            Id = "glow_stick", Name = "Glow Stick",
+            Description = "A chemical light stick — crack and shake to activate. Bright green glow, no batteries required. 3 uses.",
+            IsUsable = true, UseEffect = "You crack the stick and shake it. A cold green light floods the immediate space. Clean, reliable, and strangely hopeful.",
+            MoodDelta = 12f, StressDelta = -10f,
+            MaxUses = 3,
+            IsDeconstructable = false
+        },
+        ["oil_lamp"] = new ItemDefinition
+        {
+            Id = "oil_lamp", Name = "Oil Lamp (Empty)",
+            Description = "A small brass oil lamp. Elegant and practical — but useless without fuel. Combine with cooking oil to fill it: craft recipe fill_oil_lamp.",
+            IsUsable = false,
+            IsDeconstructable = false
+        },
+        ["filled_oil_lamp"] = new ItemDefinition
+        {
+            Id = "filled_oil_lamp", Name = "Oil Lamp",
+            Description = "A brass oil lamp filled with cooking oil. Burns with a warm, steady flame for hours. 8 uses.",
+            IsUsable = true, UseEffect = "You trim the wick and light it. The warm amber glow throws soft shadows across the walls. Something in your chest settles.",
+            MoodDelta = 18f, StressDelta = -14f,
+            MaxUses = 8,
+            IsDeconstructable = false
+        },
+
         // ── Tools & hardware ──────────────────────────────────────────────────
         ["hammer"] = new ItemDefinition
         {
@@ -519,7 +554,7 @@ public static class ItemRegistry
         ["crude_knife"] = new ItemDefinition
         {
             Id = "crude_knife", Name = "Crude Knife",
-            Description = "A bone shard bound to a fabric handle. Surprisingly sharp. +12 attack damage.",
+            Description = "A bone shard secured with duct tape — crude but effective. +12 attack damage.",
             IsUsable = true,
             UseEffect = "You test the edge. It holds.",
             MoodDelta = 3f, StressDelta = -2f,
@@ -539,11 +574,70 @@ public static class ItemRegistry
         ["leather_wrap"] = new ItemDefinition
         {
             Id = "leather_wrap", Name = "Leather Wrap",
-            Description = "Strips of leather and fabric wound together. Rough but warm.",
+            Description = "Strips of leather wound with rope. Rough but warm. Counts as a warmth layer outdoors at night.",
             IsUsable = true,
             UseEffect = "You wrap it around your hands and shoulders. The cold retreats slightly.",
             MoodDelta = 10f, StressDelta = -10f,
             IsDeconstructable = false
+        },
+        ["fur_vest"] = new ItemDefinition
+        {
+            Id = "fur_vest", Name = "Fur Vest",
+            Description = "A rough vest stitched together from animal pelts. Heavy and a little grim, but genuinely warm. Counts as a warmth layer outdoors at night.",
+            IsUsable = true,
+            UseEffect = "You pull the vest on. It smells of the wild but the warmth is immediate and real.",
+            MoodDelta = 12f, StressDelta = -10f,
+            IsDeconstructable = false
+        },
+        ["feather_bedding"] = new ItemDefinition
+        {
+            Id = "feather_bedding", Name = "Feather Bedding",
+            Description = "A rough floor pad stuffed with pigeon feathers and wrapped in cloth. Transforms a hard floor into something almost tolerable.",
+            IsUsable = true,
+            UseEffect = "You spread it out and lie down. The feathers give just enough that your body stops complaining. You didn't know how much you needed this.",
+            MoodDelta = 14f, StressDelta = -16f,
+            IsDeconstructable = true, DeconstructChance = 1.0f,
+            DeconstructYields = ["feather_bundle", "fabric_strips"]
+        },
+        ["torch"] = new ItemDefinition
+        {
+            Id = "torch", Name = "Improvised Torch",
+            Description = "A rag soaked in cooking oil and wound around a scrap handle. Burns hot and bright, but only for a few hours. 4 uses.",
+            IsUsable = true,
+            UseEffect = "You strike a light and the torch roars to life. The flame is almost uncomfortably warm and bright — it feels powerful.",
+            MoodDelta = 10f, StressDelta = -8f,
+            MaxUses = 4,
+            IsDeconstructable = false
+        },
+        ["glass_knife"] = new ItemDefinition
+        {
+            Id = "glass_knife", Name = "Glass Knife",
+            Description = "A long shard of glass with a rope-wrapped handle. More useful than a bare shard and surprisingly sharp. +16 attack damage.",
+            IsUsable = true,
+            UseEffect = "You test the grip. The rope wrap holds. It will cut.",
+            MoodDelta = 4f, StressDelta = -3f,
+            AttackBonus = 16f,
+            IsDeconstructable = false
+        },
+        ["pipe_club"] = new ItemDefinition
+        {
+            Id = "pipe_club", Name = "Pipe Club",
+            Description = "A length of scrap pipe with a rope-wound grip. Blunt, heavy, and effective at close range. +14 attack damage.",
+            IsUsable = true,
+            UseEffect = "You swing it once. The weight carries through. This will do serious damage.",
+            MoodDelta = 4f, StressDelta = -3f,
+            AttackBonus = 14f,
+            IsDeconstructable = false
+        },
+        ["sleeping_bag"] = new ItemDefinition
+        {
+            Id = "sleeping_bag", Name = "Sleeping Bag",
+            Description = "A mummy-style sleeping bag rated to -5°C. Bulky but invaluable for surviving cold nights outdoors. Counts as a warmth layer.",
+            IsUsable = true,
+            UseEffect = "You crawl into the sleeping bag and zip it up. The cold stops mattering. For a few hours, this is enough.",
+            MoodDelta = 16f, StressDelta = -14f,
+            IsDeconstructable = true, DeconstructChance = 1.0f,
+            DeconstructYields = ["fabric_strips", "fabric_strips"]
         },
 
         // ── Liquid containers (empty) ─────────────────────────────────────────

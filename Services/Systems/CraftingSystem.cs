@@ -78,9 +78,10 @@ public class CraftingSystem : ICraftingSystem
         {
             _world.Mood.GetMood(agentName).AdjustMood(+6f);
             _world.Mood.GetMood(agentName).AdjustStress(-4f);
+            _world.Mood.GetMood(agentName).AdjustHope(+3f);
         }
 
-        _world.LogDev($"[{agentName}] crafted {resultName} x{totalCount} from {ingredientNames} -> mood +6  stress -4{(craftingExpert ? "  [crafting expert]" : "")}");
+        _world.LogDev($"[{agentName}] crafted {resultName} x{totalCount} from {ingredientNames} -> mood +6  stress -4  hope +3{(craftingExpert ? "  [crafting expert]" : "")}");
         _world.Memory.AddMemory(agentName,
             $"Crafted {resultName} from {ingredientNames}.");
 

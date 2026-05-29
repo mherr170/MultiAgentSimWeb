@@ -32,8 +32,25 @@ public static class RecipeRegistry
             "weapon — +20 attack damage vs animals (applies automatically while carried)"),
 
         ["make_crude_knife"] = new("make_crude_knife", "Crude Knife",
-            ["bone_shard", "fabric_strips"], "crude_knife", 1,
-            "weapon — +12 attack damage vs animals (applies automatically while carried)"),
+            ["bone_shard", "duct_tape"], "crude_knife", 1,
+            "weapon — +12 attack damage vs animals; bone blade, tape-wrapped handle"),
+
+        ["make_glass_knife"] = new("make_glass_knife", "Glass Knife",
+            ["glass_shard", "rope"], "glass_knife", 1,
+            "weapon — +16 attack damage; rope-lashed glass blade, more grip than a bare shard"),
+
+        ["make_pipe_club"] = new("make_pipe_club", "Pipe Club",
+            ["scrap_metal", "rope"], "pipe_club", 1,
+            "weapon — +14 attack damage; scrap pipe bound with rope for a solid grip"),
+
+        // ── Light ────────────────────────────────────────────────────────────
+        ["fill_oil_lamp"] = new("fill_oil_lamp", "Oil Lamp (Filled)",
+            ["oil_lamp", "cooking_oil"], "filled_oil_lamp", 1,
+            "fuel the brass lamp — 8 uses, warm steady light, best sustained light source (+18 mood, -14 stress per use)"),
+
+        ["make_torch"] = new("make_torch", "Improvised Torch",
+            ["cooking_oil", "fabric_strips"], "torch", 1,
+            "light source — 4 uses; oil-soaked rag on a handle, mood +10, stress -8 per use"),
 
         // ── Comfort ──────────────────────────────────────────────────────────
         ["make_lantern"] = new("make_lantern", "Improvised Lantern",
@@ -41,8 +58,16 @@ public static class RecipeRegistry
             "5 uses — mood +20, stress -18 per use"),
 
         ["make_leather_wrap"] = new("make_leather_wrap", "Leather Wrap",
-            ["leather_scraps", "fabric_strips"], "leather_wrap", 1,
-            "warmth — mood +10, stress -10"),
+            ["leather_scraps", "rope"], "leather_wrap", 1,
+            "warmth layer — mood +10, stress -10; rope-bound hide strips"),
+
+        ["make_fur_vest"] = new("make_fur_vest", "Fur Vest",
+            ["fur_scraps", "fur_scraps"], "fur_vest", 1,
+            "warmth layer — mood +12, stress -10; stitched from animal pelts, better than a leather wrap"),
+
+        ["make_feather_pad"] = new("make_feather_pad", "Feather Bedding",
+            ["feather_bundle", "fabric_strips"], "feather_bedding", 1,
+            "comfort — mood +14, stress -16; a rough floor pad that makes sleeping on hard ground tolerable"),
     };
 
     public static bool TryGet(string id, out CraftRecipe? recipe) =>

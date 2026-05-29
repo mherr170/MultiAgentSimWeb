@@ -23,6 +23,11 @@ public interface IAnimalSystem
     /// Agent attempts to frighten a large animal within 2 cells. May backfire. Returns result or null.
     string? TryScareAnimal(string agentName, string animalIdStr);
 
+    /// Agent offers food to an animal within 2 cells. Consumes a food item from inventory.
+    /// Small animals: mood boost, animal becomes a companion for ~3 rounds.
+    /// Large animals: food quality–weighted chance to distract (no counter-attack on failure).
+    string? TryFeedAnimal(string agentName, string animalIdStr);
+
     /// Drains and returns any SimEvents queued by the last TickAnimals call.
     IReadOnlyList<SimEvent> DrainEvents();
 

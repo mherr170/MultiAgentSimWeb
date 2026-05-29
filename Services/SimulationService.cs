@@ -27,6 +27,26 @@ public class SimulationService
     private readonly LlmDiagnosticsService _diagnostics;
     private readonly Random _rng = new();
 
+    // Agents who can perceive events fired during the current agent's turn.
+    // null between turns so events default to global (always visible).
+    private HashSet<string>? _turnWitnesses;
+
+    private HashSet<string> ComputeWitnesses(WorldState world, string agentName)
+    {
+        var set = new HashSet<string> { agentName };
+        foreach (var (name, _, _) in world.GetVisibleAgents(agentName))
+            set.Add(name);
+        return set;
+    }
+
+    // Tags a SimEvent with the current turn's witness set, or leaves it global if null.
+    private SimEvent W(SimEvent e)
+    {
+        if (_turnWitnesses != null)
+            e.WitnessedBy = new HashSet<string>(_turnWitnesses);
+        return e;
+    }
+
     public SimulationService(IMapGenerator mapGenerator, LlmDiagnosticsService diagnostics)
     {
         _mapGenerator = mapGenerator;
@@ -40,6 +60,9 @@ public class SimulationService
     public bool IsRunning { get; private set; }
     public bool IsPaused  { get; private set; }
 
+    /// When set, non-followed agents skip MinTurnMs so the followed agent's turn arrives faster.
+    public string? FollowedAgent { get; set; }
+
     /// Fired after each meaningful state change. UI should marshal to its
     /// render thread (e.g. InvokeAsync(StateHasChanged)).
     public event Func<Task>? OnStateChanged;
@@ -47,13 +70,16 @@ public class SimulationService
     private CancellationTokenSource? _cts;
     private bool _stepRequested;
     private bool _stepRoundRequested;
+    private int  _pendingRoundSteps;
 
     public void Pause()  { IsPaused = true; }
-    public void Resume() { IsPaused = false; _stepRequested = false; _stepRoundRequested = false; }
-    public void Step()   { _stepRequested = true; }
+    public void Resume() { IsPaused = false; _stepRequested = false; _stepRoundRequested = false; _pendingRoundSteps = 0; }
 
     /// Runs all remaining agents in the current round, then pauses at the start of the next.
-    public void StepRound() { _stepRoundRequested = true; _stepRequested = true; }
+    public void StepRound() { _pendingRoundSteps = 1; _stepRoundRequested = true; _stepRequested = true; }
+
+    /// Runs <paramref name="count"/> complete rounds, then pauses.
+    public void StepRounds(int count) { _pendingRoundSteps = Math.Max(1, count); _stepRoundRequested = true; _stepRequested = true; }
 
     public void Stop()
     {
@@ -160,6 +186,17 @@ public class SimulationService
                 {
                     _stepRoundRequested = false;
                     _stepRequested = false;  // discard any lingering flag from mid-round StepRound
+
+                    // If more rounds are queued, consume one and keep going without pausing.
+                    if (_pendingRoundSteps > 1)
+                    {
+                        _pendingRoundSteps--;
+                        _stepRoundRequested = true;
+                        if (ct.IsCancellationRequested) break;
+                        continue;
+                    }
+                    _pendingRoundSteps = 0;
+
                     await NotifyAsync();
                     while (IsPaused && !_stepRequested && !_stepRoundRequested)
                     {
@@ -189,249 +226,153 @@ public class SimulationService
 
                 var deadThisRound = new List<string>();
 
-                foreach (var (runner, _, color, _) in runners)
+                // ── Agent turns ──────────────────────────────────────────────────────
+                // In follow mode, agents far from the watched agent run their LLM calls
+                // concurrently (world mutations are still applied sequentially afterward).
+                if (FollowedAgent != null && runners.Count > 1)
                 {
-                    if (ct.IsCancellationRequested) break;
-                    if (world.GetAgentPosition(runner.Name) == (-1, -1)) continue;
+                    var (fx, fy) = world.GetAgentPosition(FollowedAgent);
 
-                    CurrentAgent = new ActiveAgent(runner.Name, color);
-                    var turnStart = Stopwatch.GetTimestamp();
-                    await NotifyAsync();
+                    var parallelBatch    = new List<(AgentRunner Runner, string Color)>();
+                    var sequentialNames  = new HashSet<string>();
 
-                    AgentAction action;
-                    try
+                    foreach (var (runner, _, color, _) in runners)
                     {
-                        action = await runner.ActAsync(world.GetContext(runner.Name), ct);
-                    }
-                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                    {
-                        break;
-                    }
-                    catch (Exception ex)
-                    {
-                        Events.Enqueue(new SimEvent { Type = "error", Label = "error", AgentName = runner.Name, AgentColor = color, Content = $"ActAsync error: {ex.GetType().Name}: {ex.Message}" });
-                        action = new AgentAction { Action = "nothing" };
-                    }
+                        if (world.GetAgentPosition(runner.Name) == (-1, -1)) continue;
+                        if (runner.Name == FollowedAgent) { sequentialNames.Add(runner.Name); continue; }
 
-                    // Suppress speech when no one can hear (same-unit indoors, radius-1 outdoors).
-                    var (ax, ay) = world.GetAgentPosition(runner.Name);
-                    bool anyoneNearby = world.GetVisibleAgents(runner.Name).Count > 0;
-                    if (!anyoneNearby)
-                        action.Speech = string.Empty;
-
-                    try
-                    {
-                        world.AddEvent(runner.Name, action);
-                    }
-                    catch (Exception ex)
-                    {
-                        Events.Enqueue(new SimEvent { Type = "error", Label = "error", AgentName = runner.Name, AgentColor = color, Content = $"AddEvent error: {ex.GetType().Name}: {ex.Message}" });
-                    }
-                    CurrentAgent = null;
-
-                    if (!string.IsNullOrWhiteSpace(action.Thought))
-                        Events.Enqueue(new SimEvent { Type = "thought", AgentName = runner.Name, AgentColor = color, Label = "thinks", Content = action.Thought });
-
-                    if (!string.IsNullOrWhiteSpace(action.Speech))
-                        Events.Enqueue(new SimEvent { Type = "speech", AgentName = runner.Name, AgentColor = color, Label = "says", Content = $"\"{action.Speech}\"" });
-
-                    if (!string.IsNullOrWhiteSpace(action.Action) && action.Action != "nothing")
-                        Events.Enqueue(new SimEvent { Type = "action", AgentName = runner.Name, AgentColor = color, Label = "does", Content = action.Action });
-
-                    try
-                    {
-                        if (!string.IsNullOrWhiteSpace(action.MoveTo))
+                        bool nearFollowed = false;
+                        if (fx >= 0)
                         {
-                            var moved = world.MoveAgent(runner.Name, action.MoveTo);
-                            if (moved)
+                            var (ax, ay) = world.GetAgentPosition(runner.Name);
+                            nearFollowed = Math.Abs(ax - fx) + Math.Abs(ay - fy) <= ParallelProximityThreshold;
+                            if (!nearFollowed)
                             {
-                                var (nx, ny) = world.GetAgentPosition(runner.Name);
-                                Events.Enqueue(new SimEvent { Type = "move", AgentName = runner.Name, AgentColor = color, Label = "moves", Content = $"{action.MoveTo.ToUpperInvariant()} → ({nx},{ny})" });
+                                var fb = world.GetCell(fx, fy).BuildingName;
+                                nearFollowed = fb != null && fb == world.GetCell(ax, ay).BuildingName;
                             }
                         }
 
-                        if (!string.IsNullOrEmpty(action.MoveFloor))
-                        {
-                            var fpos = world.GetAgentPosition(runner.Name);
-                            var fcell = world.GetCell(fpos.x, fpos.y);
-                            var currentFloor = world.GetAgentFloor(runner.Name);
-                            var maxFloors = fcell.Floors;
-                            if (action.MoveFloor == "up" && currentFloor < maxFloors)
-                            {
-                                world.SetAgentFloor(runner.Name, currentFloor + 1);
-                                world.LogAt(fpos.x, fpos.y, $"{runner.Name} climbed to floor {currentFloor + 1}");
-                                Events.Enqueue(new SimEvent { Type = "move", AgentName = runner.Name, AgentColor = color, Content = $"climbs to floor {currentFloor + 1} of {maxFloors}", Round = round });
-                            }
-                            else if (action.MoveFloor == "down" && currentFloor > 1)
-                            {
-                                world.SetAgentFloor(runner.Name, currentFloor - 1);
-                                world.LogAt(fpos.x, fpos.y, $"{runner.Name} descended to floor {currentFloor - 1}");
-                                Events.Enqueue(new SimEvent { Type = "move", AgentName = runner.Name, AgentColor = color, Content = $"descends to floor {currentFloor - 1}", Round = round });
-                            }
-                        }
-
-                        if (action.Scavenge)
-                        {
-                            var scavengeResult = world.TryForage(runner.Name);
-                            if (scavengeResult is not null)
-                                Events.Enqueue(new SimEvent { Type = "scavenge", AgentName = runner.Name, AgentColor = color, Label = "scavenges", Content = scavengeResult });
-                        }
-
-                        if (action.DrinkTap)
-                        {
-                            var tapResult = world.TryDrinkTap(runner.Name);
-                            if (tapResult is not null)
-                                Events.Enqueue(new SimEvent { Type = "drink_tap", AgentName = runner.Name, AgentColor = color, Label = "drinks", Content = tapResult });
-                        }
-
-                        if (action.DrinkFountain)
-                        {
-                            var fountainResult = world.TryDrinkFountain(runner.Name);
-                            if (fountainResult is not null)
-                                Events.Enqueue(new SimEvent { Type = SimEventTypes.DrinkFountain, AgentName = runner.Name, AgentColor = color, Label = "drinks", Content = fountainResult });
-                        }
-
-                        if (action.DrinkRiver)
-                        {
-                            var riverResult = world.TryDrinkRiver(runner.Name);
-                            if (riverResult is not null)
-                                Events.Enqueue(new SimEvent { Type = SimEventTypes.DrinkRiver, AgentName = runner.Name, AgentColor = color, Label = "drinks", Content = riverResult });
-                        }
-
-                        if (action.Fish)
-                        {
-                            var fishResult = world.TryFish(runner.Name);
-                            if (fishResult is not null)
-                                Events.Enqueue(new SimEvent { Type = SimEventTypes.Fish, AgentName = runner.Name, AgentColor = color, Label = "fishes", Content = fishResult });
-                        }
-
-                        if (!string.IsNullOrWhiteSpace(action.Cook))
-                        {
-                            var cookResult = world.TryCook(runner.Name, action.Cook.Trim());
-                            if (cookResult is not null)
-                                Events.Enqueue(new SimEvent { Type = SimEventTypes.Cook, AgentName = runner.Name, AgentColor = color, Label = "cooks", Content = cookResult });
-                        }
-
-                        var itemEventContent = DispatchItemAction(world, runner.Name, action);
-                        if (itemEventContent is not null)
-                            Events.Enqueue(new SimEvent { Type = "item", AgentName = runner.Name, AgentColor = color, Label = action.ItemAction, Content = itemEventContent });
-
-                        var animalEventContent = DispatchAnimalAction(world, runner.Name, action);
-                        if (animalEventContent is not null)
-                            Events.Enqueue(new SimEvent { Type = "animal", AgentName = runner.Name, AgentColor = color, Label = action.AnimalAction, Content = animalEventContent, Round = round });
-
-                        if (!string.IsNullOrWhiteSpace(action.AddressAgent) &&
-                            !string.IsNullOrWhiteSpace(action.Speech) &&
-                            world.KnowsName(runner.Name, action.AddressAgent.Trim()))
-                        {
-                            var target = action.AddressAgent.Trim();
-                            world.QueueDirectMessage(new DirectMessage
-                            {
-                                FromAgent = runner.Name,
-                                ToAgent   = target,
-                                Message   = action.Speech,
-                                Round     = round
-                            });
-                            Events.Enqueue(new SimEvent
-                            {
-                                Type       = SimEventTypes.DirectMessage,
-                                AgentName  = runner.Name,
-                                AgentColor = color,
-                                Label      = $"→ {target}",
-                                Content    = $"\"{action.Speech}\"",
-                                Round      = round
-                            });
-                        }
-
-                        // ── Group actions ──────────────────────────────────────────────────
-                        DispatchGroupAction(world, runner.Name, color, action, round);
-
-                        // Boredom: any meaningful action resets the idle counter.
-                        bool wasActive = !string.IsNullOrWhiteSpace(action.MoveTo)
-                                      || !string.IsNullOrEmpty(action.MoveFloor)
-                                      || action.Scavenge
-                                      || action.DrinkTap || action.DrinkFountain || action.DrinkRiver
-                                      || action.Fish
-                                      || !string.IsNullOrWhiteSpace(action.Cook)
-                                      || !string.IsNullOrWhiteSpace(action.Speech)
-                                      || (action.ItemAction != "none" && !string.IsNullOrWhiteSpace(action.ItemAction))
-                                      || (action.AnimalAction != "none" && !string.IsNullOrWhiteSpace(action.AnimalAction))
-                                      || !string.IsNullOrWhiteSpace(action.CraftRecipeId);
-                        world.RecordActivity(runner.Name, wasActive);
-
-                        bool died = world.TickMeters(runner.Name);
-                        if (!died) world.TickMood(runner.Name);
-                        if (!died) world.TickPresence(runner.Name);
-                        if (!died) world.TickDayNight(runner.Name);
-                        if (!died) world.TickWeatherEffects(runner.Name);
-                        if (!died) world.TickStamina(runner.Name);
-                        if (died)
-                        {
-                            var cause = world.Survival.DeathCause(runner.Name);
-                            Events.Enqueue(new SimEvent { Type = "death", AgentName = runner.Name, AgentColor = color, Label = "dies", Content = $"{runner.Name} has died of {cause}.", Round = round });
-
-                            // Grief: surviving agents who knew the deceased react emotionally,
-                            // scaled by how much they trusted them.
-                            // Skip agents within radius 2 of the death cell — KillAgent's witness
-                            // sweep already applies a proximity-based mood/stress hit to them, so
-                            // adding trust-grief on top would double-penalise nearby agents.
-                            var deathPos = world.GetAgentPosition(runner.Name);
-                            foreach (var survivor in world.AgentNames)
-                            {
-                                if (survivor == runner.Name) continue;
-                                if (!world.Mood.Has(survivor)) continue;
-                                float trust = world.GetMood(survivor).GetTrust(runner.Name);
-                                if (trust <= 0f) continue;   // indifferent or hostile — no grief
-
-                                // Already handled by KillAgent's proximity sweep.
-                                var (sx, sy) = world.GetAgentPosition(survivor);
-                                if (deathPos.x >= 0 && sx >= 0 &&
-                                    Math.Max(Math.Abs(sx - deathPos.x), Math.Abs(sy - deathPos.y)) <= 2)
-                                    continue;
-
-                                float moodHit   = trust > 70f ? -20f
-                                                : trust > 50f ? -14f
-                                                : trust > 20f ?  -8f
-                                                :                -4f;
-                                float stressHit = trust > 70f ? +18f
-                                                : trust > 50f ? +12f
-                                                : trust > 20f ?  +7f
-                                                :                +3f;
-
-                                world.GetMood(survivor).AdjustMood(moodHit);
-                                world.GetMood(survivor).AdjustStress(stressHit);
-                                world.Memory.AddMemory(survivor,
-                                    $"{runner.Name} has died. I knew them.");
-                                world.LogDev($"[{survivor}] grief for {runner.Name} → mood {moodHit:+0;-0}  stress {stressHit:+0;-0}  (trust was {trust:F0}, distant grief)");
-                            }
-
-                            world.KillAgent(runner.Name);
-                            world.Groups.LeaveGroup(runner.Name);
-                            AgentColorHex.Remove(runner.Name);
-                            deadThisRound.Add(runner.Name);
-                        }
+                        if (nearFollowed) sequentialNames.Add(runner.Name);
+                        else             parallelBatch.Add((runner, color));
                     }
-                    catch (Exception ex)
+
+                    // ── Parallel batch: concurrent LLM calls, sequential apply ────────
+                    if (parallelBatch.Count > 0 && !ct.IsCancellationRequested)
                     {
-                        Events.Enqueue(new SimEvent { Type = "error", Label = "error", AgentName = runner.Name, AgentColor = color, Content = $"Turn error: {ex.GetType().Name}: {ex.Message}" });
+                        var ctxPairs = parallelBatch
+                            .Select(r => (r.Runner, r.Color, Ctx: world.GetContext(r.Runner.Name)))
+                            .ToList();
+
+                        var actionTasks = ctxPairs.Select(async p =>
+                        {
+                            AgentAction act;
+                            try   { act = await p.Runner.ActAsync(p.Ctx, ct); }
+                            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                                  { return (p.Runner, p.Color, Action: (AgentAction?)null); }
+                            catch (Exception ex)
+                            {
+                                Events.Enqueue(new SimEvent { Type = "error", Label = "error", AgentName = p.Runner.Name, AgentColor = p.Color, Content = $"ActAsync error: {ex.GetType().Name}: {ex.Message}" });
+                                act = new AgentAction { Action = "nothing" };
+                            }
+                            return (p.Runner, p.Color, Action: (AgentAction?)act);
+                        }).ToList();
+
+                        var results = await Task.WhenAll(actionTasks);
+
+                        foreach (var (runner, color, action) in results)
+                        {
+                            if (ct.IsCancellationRequested || action == null) break;
+                            ApplyAgentTurn(runner, color, action, world, round, deadThisRound);
+                        }
+
+                        await NotifyAsync();
                     }
 
-                    foreach (var msg in world.DrainDevLog())
-                        Events.Enqueue(new SimEvent { Type = "dev", Label = "dev", Content = msg });
-
-                    await NotifyAsync();
-
-                    // Pace control: wait out the remainder of the minimum turn window.
-                    if (cfg.MinTurnMs > 0 && !ct.IsCancellationRequested)
+                    // ── Sequential: followed agent + nearby agents ────────────────────
+                    foreach (var (runner, _, color, _) in runners)
                     {
-                        var elapsed = (int)Stopwatch.GetElapsedTime(turnStart).TotalMilliseconds;
-                        var remaining = cfg.MinTurnMs - elapsed;
-                        if (remaining > 0)
-                            await Task.Delay(remaining, ct).ConfigureAwait(false);
-                    }
+                        if (ct.IsCancellationRequested) break;
+                        if (!sequentialNames.Contains(runner.Name)) continue;
+                        if (world.GetAgentPosition(runner.Name) == (-1, -1)) continue;
 
-                    await WaitIfPaused(ct);
-                    if (ct.IsCancellationRequested) break;
+                        CurrentAgent = new ActiveAgent(runner.Name, color);
+                        _turnWitnesses = ComputeWitnesses(world, runner.Name);
+                        var turnStart = Stopwatch.GetTimestamp();
+                        await NotifyAsync();
+
+                        AgentAction action;
+                        try
+                        {
+                            action = await runner.ActAsync(world.GetContext(runner.Name), ct);
+                        }
+                        catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+                        catch (Exception ex)
+                        {
+                            Events.Enqueue(new SimEvent { Type = "error", Label = "error", AgentName = runner.Name, AgentColor = color, Content = $"ActAsync error: {ex.GetType().Name}: {ex.Message}" });
+                            action = new AgentAction { Action = "nothing" };
+                        }
+
+                        CurrentAgent = null;
+                        ApplyAgentTurn(runner, color, action, world, round, deadThisRound);
+                        await NotifyAsync();
+
+                        // Only the followed agent gets pace delay.
+                        if (cfg.MinTurnMs > 0 && runner.Name == FollowedAgent && !ct.IsCancellationRequested)
+                        {
+                            var elapsed   = (int)Stopwatch.GetElapsedTime(turnStart).TotalMilliseconds;
+                            var remaining = cfg.MinTurnMs - elapsed;
+                            if (remaining > 0)
+                                await Task.Delay(remaining, ct).ConfigureAwait(false);
+                        }
+
+                        await WaitIfPaused(ct);
+                        if (ct.IsCancellationRequested) break;
+                    }
+                }
+                else
+                {
+                    // ── Standard sequential loop (no follow mode) ────────────────────
+                    foreach (var (runner, _, color, _) in runners)
+                    {
+                        if (ct.IsCancellationRequested) break;
+                        if (world.GetAgentPosition(runner.Name) == (-1, -1)) continue;
+
+                        CurrentAgent = new ActiveAgent(runner.Name, color);
+                        _turnWitnesses = ComputeWitnesses(world, runner.Name);
+                        var turnStart = Stopwatch.GetTimestamp();
+                        await NotifyAsync();
+
+                        AgentAction action;
+                        try
+                        {
+                            action = await runner.ActAsync(world.GetContext(runner.Name), ct);
+                        }
+                        catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+                        catch (Exception ex)
+                        {
+                            Events.Enqueue(new SimEvent { Type = "error", Label = "error", AgentName = runner.Name, AgentColor = color, Content = $"ActAsync error: {ex.GetType().Name}: {ex.Message}" });
+                            action = new AgentAction { Action = "nothing" };
+                        }
+
+                        CurrentAgent = null;
+                        ApplyAgentTurn(runner, color, action, world, round, deadThisRound);
+                        await NotifyAsync();
+
+                        bool applyPace = cfg.MinTurnMs > 0
+                            && (FollowedAgent == null || runner.Name == FollowedAgent)
+                            && !ct.IsCancellationRequested;
+                        if (applyPace)
+                        {
+                            var elapsed   = (int)Stopwatch.GetElapsedTime(turnStart).TotalMilliseconds;
+                            var remaining = cfg.MinTurnMs - elapsed;
+                            if (remaining > 0)
+                                await Task.Delay(remaining, ct).ConfigureAwait(false);
+                        }
+
+                        await WaitIfPaused(ct);
+                        if (ct.IsCancellationRequested) break;
+                    }
                 }
 
                 // ── Response phase ────────────────────────────────────────────────────
@@ -442,12 +383,14 @@ public class SimulationService
                     if (!world.HasPendingMessages(runner.Name)) continue;
 
                     var pending = world.DrainPendingMessages(runner.Name);
+                    _turnWitnesses = ComputeWitnesses(world, runner.Name);
                     try
                     {
                         await RunConversationAsync(world, runners, runner, color, pending, round, ct);
                     }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested)
                     {
+                        _turnWitnesses = null;
                         break;
                     }
                     catch (Exception ex)
@@ -455,6 +398,7 @@ public class SimulationService
                         Events.Enqueue(new SimEvent { Type = "error", Label = "error", AgentName = runner.Name, AgentColor = color, Content = $"Conversation error: {ex.GetType().Name}: {ex.Message}" });
                     }
 
+                    _turnWitnesses = null;
                     foreach (var msg in world.DrainDevLog())
                         Events.Enqueue(new SimEvent { Type = "dev", Label = "dev", Content = msg });
 
@@ -479,6 +423,11 @@ public class SimulationService
                         Content = _diagnostics.GetRoundSummary(),
                         Round   = round,
                     });
+
+                // Keep the event queue bounded so UI renders don't get progressively
+                // heavier as events accumulate over a long run. Drop the oldest entries
+                // once the queue exceeds the limit — recent events are what the UI shows.
+                TrimEvents();
 
                 if (runners.Count == 0)
                 {
@@ -513,186 +462,14 @@ public class SimulationService
                 });
 
             _diagnostics.Close();
-            IsRunning = false;
-            IsPaused = false;
-            _stepRequested = false;
+            IsRunning     = false;
+            IsPaused      = false;
+            FollowedAgent = null;
+            _stepRequested      = false;
             _stepRoundRequested = false;
             _cts?.Dispose();
             _cts = null;
             await NotifyAsync();
-        }
-    }
-
-    private void DispatchGroupAction(WorldState world, string agentName, string agentColor, AgentAction action, int round)
-    {
-        // Leave group
-        if (action.LeaveGroup)
-        {
-            // Snapshot members before removal so we can notify them.
-            var formerMembers = world.Groups.GetGroup(agentName)?.Members.ToList();
-            var leftName = world.Groups.LeaveGroup(agentName);
-            if (leftName != null)
-            {
-                Events.Enqueue(new SimEvent
-                {
-                    Type      = SimEventTypes.Group,
-                    AgentName = agentName,
-                    AgentColor= agentColor,
-                    Label     = "leaves group",
-                    Content   = $"{agentName} left \"{leftName}\"",
-                    Round     = round,
-                });
-                world.Memory.AddMemory(agentName, $"I left the group \"{leftName}\".");
-
-                // Remaining members who know the leaver lose trust in them.
-                if (formerMembers != null)
-                {
-                    foreach (var member in formerMembers.Where(m => m != agentName))
-                    {
-                        if (!world.KnowsName(member, agentName)) continue;
-                        if (!world.Mood.Has(member)) continue;
-                        world.GetMood(member).AdjustTrust(agentName, -12f);
-                        world.GetMood(member).AdjustStress(+5f);
-                        world.Memory.AddMemory(member, $"{agentName} abandoned our group \"{leftName}\".");
-                        world.LogDev($"[{member}] trust[{agentName}] -12  stress +5  (abandoned group \"{leftName}\")");
-                    }
-                }
-            }
-            return; // can't simultaneously propose or accept
-        }
-
-        // Accept a pending invite
-        if (action.AcceptGroupInvite)
-        {
-            var joined = world.Groups.AcceptInvite(agentName);
-            if (joined != null)
-            {
-                Events.Enqueue(new SimEvent
-                {
-                    Type      = SimEventTypes.Group,
-                    AgentName = agentName,
-                    AgentColor= agentColor,
-                    Label     = "joins group",
-                    Content   = $"{agentName} joined \"{joined.Name}\" (members: {string.Join(", ", joined.Members)})",
-                    Round     = round,
-                });
-                world.Memory.AddMemory(agentName, $"I joined the group \"{joined.Name}\".");
-                foreach (var member in joined.Members.Where(m => m != agentName))
-                    world.Memory.AddMemory(member, $"{agentName} joined our group \"{joined.Name}\".");
-            }
-            return;
-        }
-
-        // Propose / invite
-        if (!string.IsNullOrWhiteSpace(action.GroupPropose) && !string.IsNullOrWhiteSpace(action.AddressAgent))
-        {
-            var target = action.AddressAgent.Trim();
-            // Must know the target's name and be in earshot
-            if (!world.KnowsName(agentName, target)) return;
-            if (!world.GetVisibleAgents(agentName).Any(a => a.name == target)) return;
-            // Must have a genuinely positive attitude toward the target — trust strictly above neutral
-            float trust = world.Mood.Has(agentName) ? world.GetMood(agentName).GetTrust(target) : 0f;
-            if (trust <= 0f) return;
-
-            var existingGroupId = world.Groups.GetGroupId(agentName);
-            string groupId, groupName;
-            if (existingGroupId != null)
-            {
-                // Already in a group — invite the target to join it
-                groupId   = existingGroupId;
-                groupName = world.Groups.GetGroup(agentName)!.Name;
-            }
-            else
-            {
-                // Create a new group
-                groupName = action.GroupPropose.Trim();
-                groupId   = world.Groups.CreateGroup(agentName, groupName);
-                Events.Enqueue(new SimEvent
-                {
-                    Type      = SimEventTypes.Group,
-                    AgentName = agentName,
-                    AgentColor= agentColor,
-                    Label     = "forms group",
-                    Content   = $"{agentName} formed the group \"{groupName}\"",
-                    Round     = round,
-                });
-                world.Memory.AddMemory(agentName, $"I formed the group \"{groupName}\" and invited {target}.");
-            }
-
-            world.Groups.SendInvite(agentName, target, groupId, groupName);
-            Events.Enqueue(new SimEvent
-            {
-                Type      = SimEventTypes.Group,
-                AgentName = agentName,
-                AgentColor= agentColor,
-                Label     = "invites",
-                Content   = $"{agentName} invited {target} to \"{groupName}\"",
-                Round     = round,
-            });
-        }
-
-        // Waypoint
-        if (!string.IsNullOrWhiteSpace(action.GroupSetWaypoint))
-        {
-            var grp = world.Groups.GetGroup(agentName);
-            if (grp != null)
-            {
-                var pos = world.GetAgentPosition(agentName);
-                grp.Waypoint = (pos.x, pos.y, action.GroupSetWaypoint.Trim(), agentName);
-                Events.Enqueue(new SimEvent
-                {
-                    Type      = SimEventTypes.Group,
-                    AgentName = agentName,
-                    AgentColor= agentColor,
-                    Label     = "sets waypoint",
-                    Content   = $"{agentName} marked \"{action.GroupSetWaypoint.Trim()}\" ({pos.x},{pos.y}) as the group meeting point",
-                    Round     = round,
-                });
-            }
-        }
-
-        // Propose vote
-        if (!string.IsNullOrWhiteSpace(action.GroupVotePropose))
-        {
-            var grp = world.Groups.GetGroup(agentName);
-            if (grp != null && grp.ActiveVote == null)
-            {
-                grp.ActiveVote = new GroupVote
-                {
-                    Proposer      = agentName,
-                    Question      = action.GroupVotePropose.Trim(),
-                    ProposedRound = round,
-                };
-                grp.ActiveVote.Votes[agentName] = "yes"; // proposer implicitly votes yes
-                Events.Enqueue(new SimEvent
-                {
-                    Type      = SimEventTypes.Group,
-                    AgentName = agentName,
-                    AgentColor= agentColor,
-                    Label     = "calls vote",
-                    Content   = $"{agentName} called a group vote: \"{action.GroupVotePropose.Trim()}\"",
-                    Round     = round,
-                });
-            }
-        }
-
-        // Cast vote
-        if (!string.IsNullOrWhiteSpace(action.GroupVote))
-        {
-            var grp = world.Groups.GetGroup(agentName);
-            if (grp?.ActiveVote != null && !grp.ActiveVote.Votes.ContainsKey(agentName))
-            {
-                grp.ActiveVote.Votes[agentName] = action.GroupVote.Trim().ToLowerInvariant();
-                Events.Enqueue(new SimEvent
-                {
-                    Type      = SimEventTypes.Group,
-                    AgentName = agentName,
-                    AgentColor= agentColor,
-                    Label     = "votes",
-                    Content   = $"{agentName} voted \"{action.GroupVote.Trim()}\" on \"{grp.ActiveVote.Question}\"",
-                    Round     = round,
-                });
-            }
         }
     }
 
@@ -837,13 +614,13 @@ public class SimulationService
             }
 
             if (!string.IsNullOrWhiteSpace(reply.Thought))
-                Events.Enqueue(new SimEvent { Type = "thought", AgentName = nextSpeaker, AgentColor = nextRunner.Color, Label = "thinks", Content = reply.Thought });
+                Events.Enqueue(W(new SimEvent { Type = "thought", AgentName = nextSpeaker, AgentColor = nextRunner.Color, Label = "thinks", Content = reply.Thought }));
 
             if (string.IsNullOrWhiteSpace(reply.Speech)) break;
 
             // Emit the right event type depending on direction.
             bool nextIsRespondent = nextSpeaker == respondent.Name;
-            Events.Enqueue(new SimEvent
+            Events.Enqueue(W(new SimEvent
             {
                 Type      = nextIsRespondent ? SimEventTypes.DirectResponse : SimEventTypes.DirectMessage,
                 AgentName = nextSpeaker,
@@ -853,7 +630,7 @@ public class SimulationService
                     : $"→ {world.DescribeAgent(nextSpeaker, respondent.Name)}",
                 Content   = $"\"{reply.Speech}\"",
                 Round     = round,
-            });
+            }));
 
             world.LogAt(world.GetAgentPosition(nextSpeaker).x,
                         world.GetAgentPosition(nextSpeaker).y,
@@ -910,20 +687,20 @@ public class SimulationService
         var (rx, ry) = world.GetAgentPosition(responderName);
 
         if (!string.IsNullOrWhiteSpace(response.Thought))
-            Events.Enqueue(new SimEvent
+            Events.Enqueue(W(new SimEvent
             {
                 Type = "thought", AgentName = responderName, AgentColor = responderColor,
                 Label = "thinks", Content = response.Thought
-            });
+            }));
 
         if (string.IsNullOrWhiteSpace(response.Speech)) return;
 
-        Events.Enqueue(new SimEvent
+        Events.Enqueue(W(new SimEvent
         {
             Type = "direct_response", AgentName = responderName, AgentColor = responderColor,
             Label = "replies", Content = $"\"{response.Speech}\"",
             Round = round
-        });
+        }));
 
         world.LogAt(rx, ry, $"{responderName} replies: \"{response.Speech}\"");
 
@@ -989,53 +766,70 @@ public class SimulationService
         }
     }
 
-    private static string? DispatchAnimalAction(WorldState world, string agentName, AgentAction action)
-    {
-        var id = action.AnimalTargetId?.Trim() ?? "";
-        return action.AnimalAction switch
-        {
-            "attack" => world.TryAttackAnimal(agentName, id),
-            "trap"   => world.TryTrapAnimal(agentName, id),
-            "scare"  => world.TryScareAnimal(agentName, id),
-            _        => null
-        };
-    }
+    // Agents within this Manhattan distance of the followed agent run sequentially.
+    // Those farther away have their LLM calls batched in parallel.
+    private const int ParallelProximityThreshold = 8;
 
-    private static string? DispatchItemAction(WorldState world, string agentName, AgentAction action)
+    /// Applies a resolved AgentAction to the world (post-LLM, sequential).
+    /// Sets and clears _turnWitnesses internally so W() tags events correctly.
+    private void ApplyAgentTurn(
+        AgentRunner runner, string color, AgentAction action,
+        WorldState world, int round, List<string> deadThisRound)
     {
-        var id = action.ItemTargetId?.Trim() ?? "";
-        switch (action.ItemAction)
+        bool anyoneNearby = world.GetVisibleAgents(runner.Name).Count > 0;
+        if (!anyoneNearby)
+            action.Speech = string.Empty;
+
+        _turnWitnesses = ComputeWitnesses(world, runner.Name);
+
+        try
         {
-            case "pick_up": return world.TryPickUp(agentName, id) ? "picks up item" : null;
-            case "drop":    return world.TryDrop(agentName, id)   ? "drops item"    : null;
-            case "use":
-            {
-                var fx = world.TryUse(agentName, id);
-                return fx.Length > 0 ? fx : null;
-            }
-            case "give":    return world.TryGive(agentName, id, action.ItemGiveTo?.Trim() ?? "") ? $"gives item to {action.ItemGiveTo}" : null;
-            case "deconstruct":
-            {
-                var (consumed, ok, yields) = world.TryDeconstruct(agentName, id);
-                if (ok)       return $"deconstructs \u2192 {string.Join(", ", yields)}";
-                if (consumed) return "deconstruct failed \u2014 item crumbled to nothing";
-                return null;
-            }
-            case "craft":
-            {
-                var result = world.TryCraft(agentName, action.CraftRecipeId?.Trim() ?? "");
-                return result?.StartsWith("crafts ") == true ? result : null;
-            }
-            case "place_trap":
-            {
-                return world.TryPlaceTrap(agentName, id);
-            }
-            case "fill":
-            {
-                return world.TryFillContainer(agentName, id);
-            }
-            default: return null;
+            world.AddEvent(runner.Name, action);
         }
+        catch (Exception ex)
+        {
+            Events.Enqueue(new SimEvent { Type = "error", Label = "error", AgentName = runner.Name, AgentColor = color, Content = $"AddEvent error: {ex.GetType().Name}: {ex.Message}" });
+        }
+
+        foreach (var ev in ActionResolver.NarrativeEvents(runner.Name, color, action))
+            Events.Enqueue(W(ev));
+
+        try
+        {
+            foreach (var ev in ActionResolver.Resolve(world, runner.Name, color, action, round))
+                Events.Enqueue(W(ev));
+
+            foreach (var ev in GroupActionHandler.Handle(world, runner.Name, color, action, round))
+                Events.Enqueue(W(ev));
+
+            world.RecordActivity(runner.Name, action.IsActive);
+
+            bool died = world.TickMeters(runner.Name);
+            if (!died) world.TickMood(runner.Name);
+            if (!died) world.TickPresence(runner.Name);
+            if (!died) world.TickDayNight(runner.Name);
+            if (!died) world.TickWeatherEffects(runner.Name);
+            if (!died) world.TickStamina(runner.Name);
+            if (died)
+            {
+                var cause = world.Survival.DeathCause(runner.Name);
+                Events.Enqueue(new SimEvent { Type = "death", AgentName = runner.Name, AgentColor = color, Label = "dies", Content = $"{runner.Name} has died of {cause}.", Round = round });
+                world.Mood.ProcessDeath(runner.Name);
+                world.KillAgent(runner.Name);
+                world.Groups.LeaveGroup(runner.Name);
+                AgentColorHex.Remove(runner.Name);
+                deadThisRound.Add(runner.Name);
+            }
+        }
+        catch (Exception ex)
+        {
+            Events.Enqueue(new SimEvent { Type = "error", Label = "error", AgentName = runner.Name, AgentColor = color, Content = $"Turn error: {ex.GetType().Name}: {ex.Message}" });
+        }
+
+        foreach (var msg in world.DrainDevLog())
+            Events.Enqueue(new SimEvent { Type = "dev", Label = "dev", Content = msg });
+
+        _turnWitnesses = null;
     }
 
     private async Task WaitIfPaused(CancellationToken ct)
@@ -1052,4 +846,14 @@ public class SimulationService
     }
 
     private Task NotifyAsync() => OnStateChanged?.Invoke() ?? Task.CompletedTask;
+
+    // Maximum number of events to keep in the queue. Older entries are dropped
+    // once this limit is exceeded so that UI renders stay O(1) in run length.
+    private const int MaxEvents = 500;
+
+    private void TrimEvents()
+    {
+        while (Events.Count > MaxEvents)
+            Events.TryDequeue(out _);
+    }
 }

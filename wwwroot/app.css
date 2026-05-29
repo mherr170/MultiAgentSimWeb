@@ -129,6 +129,37 @@ textarea:disabled, input:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn-remove:hover { border-color: #ef4444; color: #ef4444; }
 .btn-remove:disabled { opacity: 0.3; cursor: not-allowed; }
 
+.agent-row-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    align-self: center;
+}
+
+.btn-prefollow {
+    background: transparent;
+    border: 1px solid #2e2e42;
+    color: #52525b;
+    border-radius: 6px;
+    width: 32px;
+    height: 32px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    line-height: 1;
+}
+.btn-prefollow:hover { border-color: #818cf8; color: #818cf8; }
+.btn-prefollow.prefollow-active {
+    border-color: #818cf8;
+    background: #1a1a38;
+    color: #a5b4fc;
+    box-shadow: 0 0 6px #6366f140;
+}
+.btn-prefollow:disabled { opacity: 0.3; cursor: not-allowed; }
+
 .btn-add {
     background: transparent;
     border: 1px dashed #2e2e42;
@@ -1402,3 +1433,782 @@ textarea:disabled, input:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .summary-mvp { font-size: 0.78rem; color: #888; text-align: center; }
 .summary-mvp strong { color: #b0b0ee; }
+
+/* ══════════════════════════════════════════════════════════════
+   BROADCAST MODE
+   ══════════════════════════════════════════════════════════════ */
+
+.sim-app.broadcast-mode {
+    max-width: none;
+    padding: 8px;
+    height: 100dvh;
+    overflow: hidden;
+    gap: 0;
+}
+
+/* Floating "⚙ Config" button — top-left corner */
+.broadcast-config-toggle {
+    position: fixed;
+    top: 10px;
+    left: 14px;
+    z-index: 30;
+    background: rgba(15,15,36,0.85);
+    border: 1px solid #22223a;
+    border-radius: 8px;
+    color: #888;
+    font-size: 0.75rem;
+    padding: 4px 10px;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+    transition: color 0.15s, border-color 0.15s;
+}
+.broadcast-config-toggle:hover { color: #e0e0ff; border-color: var(--spotlight-color, #4f46e5); }
+
+/* Button shown in the normal run-controls to enter broadcast mode */
+.enter-broadcast-btn {
+    background: transparent;
+    border: 1px solid #22223a;
+    border-radius: 8px;
+    color: #52525b;
+    font-size: 0.8rem;
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+.enter-broadcast-btn:hover { color: #e0e0ff; border-color: #4f46e5; }
+
+/* ── HUD grid ─────────────────────────────────────────────── */
+.broadcast-hud {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr) 300px;
+    grid-template-rows: minmax(0, 1fr) 80px;
+    grid-template-areas:
+        "left map feed"
+        "chat chat chat";
+    gap: 8px;
+    height: calc(100dvh - 16px);
+}
+
+/* Follow HUD — same 3-column layout, no chat footer row */
+.follow-hud {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr) 300px;
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-areas: "left map feed";
+    gap: 8px;
+    height: calc(100dvh - 16px);
+}
+
+/* Left column: spotlight on top, compact roster below */
+.hud-left {
+    grid-area: left;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow: hidden;
+    padding-top: 40px; /* clear the config-toggle button */
+}
+
+.hud-roster {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    scrollbar-width: thin;
+    scrollbar-color: #22223a transparent;
+}
+
+.hud-map {
+    grid-area: map;
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+}
+
+/* Make the map-panel fill its grid cell */
+.hud-map > .map-panel {
+    height: 100%;
+    overflow: hidden;
+}
+
+.hud-map > .map-panel > .map-viewport > .map-scroll-container {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+}
+
+.hud-feed {
+    grid-area: feed;
+    overflow: hidden;
+    background: #0f0f24;
+    border: 1px solid #22223a;
+    border-radius: 14px;
+    padding: 10px;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.hud-chat {
+    grid-area: chat;
+}
+
+/* Controls overlay on the map */
+.hud-controls-overlay {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 5;
+    display: flex;
+    gap: 5px;
+    background: rgba(15,15,36,0.88);
+    border: 1px solid #22223a;
+    border-radius: 10px;
+    padding: 5px 8px;
+    backdrop-filter: blur(4px);
+}
+
+/* ── Agent status cards ───────────────────────────────────── */
+.agent-card {
+    background: color-mix(in srgb, var(--agent-color) 6%, #0f0f24);
+    border: 1px solid color-mix(in srgb, var(--agent-color) 30%, transparent);
+    border-radius: 10px;
+    padding: 8px 10px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    flex-shrink: 0;
+}
+.agent-card:hover {
+    background: color-mix(in srgb, var(--agent-color) 10%, #0f0f24);
+    border-color: color-mix(in srgb, var(--agent-color) 55%, transparent);
+}
+
+.agent-card-dead {
+    filter: grayscale(0.75) opacity(0.6);
+}
+
+.agent-card-thinking {
+    border-color: color-mix(in srgb, var(--agent-color) 70%, transparent);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--agent-color) 25%, transparent);
+}
+
+.agent-card-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.agent-card-info {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.agent-card-name {
+    font-size: 0.85rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.agent-card-badge {
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.badge-active   { color: #52525b; }
+.badge-thinking { color: #a3e635; }
+.badge-dead     { color: #ef4444; }
+
+.thinking-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #a3e635;
+    display: inline-block;
+    animation: pulse-dot 1.1s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%       { opacity: 0.35; transform: scale(0.7); }
+}
+
+.agent-card-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.agent-bar {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.agent-bar .bar-label {
+    font-size: 0.6rem;
+    color: #52525b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    width: 36px;
+    flex-shrink: 0;
+}
+
+.agent-bar .inv-meter-bar {
+    flex: 1;
+}
+
+/* ── Broadcast event feed ─────────────────────────────────── */
+.broadcast-feed {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #22223a transparent;
+}
+
+.bfeed-round {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #3a3a55;
+    padding: 6px 0 2px;
+    border-top: 1px solid #1a1a30;
+    margin-top: 4px;
+}
+.bfeed-round:first-child { border-top: none; margin-top: 0; padding-top: 0; }
+
+.bfeed-event {
+    display: flex;
+    align-items: flex-start;
+    gap: 5px;
+    padding: 4px 6px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    flex-wrap: wrap;
+}
+.bfeed-event:hover { background: rgba(255,255,255,0.03); }
+
+.bfeed-event.death     { background: rgba(239,68,68,0.07); border-left: 2px solid #ef4444; }
+.bfeed-event.animal_attack { background: rgba(239,68,68,0.05); border-left: 2px solid #f97316; }
+.bfeed-event.speech,
+.bfeed-event.direct_message,
+.bfeed-event.direct_response { background: rgba(79,70,229,0.06); }
+
+.bfeed-name {
+    font-weight: 700;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.bfeed-label {
+    color: #52525b;
+    font-style: italic;
+    flex-shrink: 0;
+}
+
+.bfeed-content {
+    color: #b0b0cc;
+    word-break: break-word;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ACTIVE AGENT SPOTLIGHT PANEL
+   ══════════════════════════════════════════════════════════════ */
+
+.active-panel {
+    background: color-mix(in srgb, var(--spotlight-color, #4f46e5) 7%, #0c0c1e);
+    border: 1px solid color-mix(in srgb, var(--spotlight-color, #4f46e5) 35%, transparent);
+    border-radius: 12px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex-shrink: 0;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.active-panel-thinking {
+    border-color: color-mix(in srgb, var(--spotlight-color) 65%, transparent);
+    box-shadow: 0 0 14px color-mix(in srgb, var(--spotlight-color) 20%, transparent);
+}
+
+.active-panel-dead {
+    filter: grayscale(0.8) opacity(0.55);
+}
+
+.active-panel-empty {
+    border-style: dashed;
+    opacity: 0.4;
+    align-items: center;
+    justify-content: center;
+    min-height: 64px;
+}
+
+.active-panel-waiting {
+    font-size: 0.7rem;
+    color: #52525b;
+    font-style: italic;
+}
+
+/* Header: portrait + name + badge */
+.active-panel-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.active-panel-identity {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.active-panel-name {
+    font-size: 1rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.active-panel-badge {
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.badge-idle { color: #52525b; }
+
+/* Stat meters */
+.active-panel-meters {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.active-meter-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.active-meter-label {
+    font-size: 0.6rem;
+    color: #52525b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    width: 42px;
+    flex-shrink: 0;
+}
+
+.active-meter-bar {
+    flex: 1;
+    height: 5px;
+    background: #1a1a2e;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.active-meter-mood-track {
+    background: #1a1a2e;
+}
+
+.active-meter-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.4s ease;
+}
+
+/* Re-use existing fill colour classes from inv-meter-fill */
+.active-meter-fill.mood-pos  { background: #22d3ee; }
+.active-meter-fill.mood-neg  { background: #f472b6; }
+.active-meter-fill.stamina   { background: #a78bfa; }
+
+.active-meter-value {
+    font-size: 0.65rem;
+    color: #52525b;
+    width: 24px;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+/* Thought bubble */
+.active-thought {
+    display: flex;
+    align-items: flex-start;
+    gap: 5px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 8px;
+    padding: 6px 8px;
+}
+
+.active-thought-icon {
+    font-size: 0.8rem;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.active-thought-text {
+    font-size: 0.72rem;
+    font-style: italic;
+    color: #9090b8;
+    line-height: 1.4;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Last action */
+.active-action {
+    display: flex;
+    align-items: flex-start;
+    gap: 5px;
+}
+
+.active-action-icon {
+    font-size: 0.75rem;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.active-action-text {
+    font-size: 0.72rem;
+    color: #c0c0e0;
+    line-height: 1.35;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Inventory chips */
+.active-inventory {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.active-inv-chip {
+    font-size: 0.62rem;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid #2a2a40;
+    border-radius: 4px;
+    padding: 2px 6px;
+    color: #8080a8;
+    white-space: nowrap;
+}
+
+/* ── Follow mode ─────────────────────────────────────────── */
+
+.enter-follow-btn {
+    background: transparent;
+    border: 1px solid #3a3a5a;
+    border-radius: 8px;
+    color: #6b6b88;
+    padding: 0.45rem 0.9rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.enter-follow-btn:hover {
+    border-color: #818cf8;
+    color: #a5b4fc;
+    background: rgba(99, 91, 255, 0.06);
+}
+
+.follow-mode-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.55rem 1rem;
+    background: rgba(99, 91, 255, 0.07);
+    border: 1px solid rgba(99, 91, 255, 0.16);
+    border-radius: 8px;
+    font-size: 0.85rem;
+}
+
+.follow-mode-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.following-label { color: #a5b4fc; }
+
+.following-hint {
+    color: #52525b;
+    font-size: 0.8rem;
+}
+
+.btn-exit-follow {
+    background: transparent;
+    border: 1px solid #3f3f5a;
+    border-radius: 5px;
+    color: #52525b;
+    padding: 0.25rem 0.6rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s;
+}
+.btn-exit-follow:hover { border-color: #818cf8; color: #a5b4fc; }
+
+/* ── Follow mode map overlay ─────────────────────────────── */
+
+.map-viewport {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+.follow-scene-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(5, 5, 18, 0.84);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    border-radius: 8px;
+    animation: follow-overlay-in 0.45s ease;
+}
+
+@keyframes follow-overlay-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.follow-scene-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 1.4rem 1.8rem;
+    background: rgba(8, 8, 24, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+    max-width: 260px;
+    text-align: center;
+}
+
+.follow-scene-portrait {
+    animation: portrait-breathe 3.5s ease-in-out infinite;
+    margin-bottom: 0.2rem;
+}
+
+@keyframes portrait-breathe {
+    0%, 100% { transform: translateY(0);    opacity: 1.0; }
+    50%       { transform: translateY(-4px); opacity: 0.85; }
+}
+
+.follow-scene-name {
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+.follow-scene-location {
+    font-size: 0.7rem;
+    color: #3a3a58;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.follow-scene-time {
+    font-size: 0.7rem;
+    color: #28283e;
+}
+
+.follow-scene-vignette {
+    font-size: 0.82rem;
+    color: #6b6b8a;
+    font-style: italic;
+    line-height: 1.55;
+    margin-top: 0.3rem;
+    min-height: 2.5em;
+    transition: opacity 0.55s ease;
+}
+
+.follow-scene-vignette.vignette-hidden { opacity: 0; }
+
+.follow-scene-speech {
+    margin: 0.5rem 0 0;
+    padding: 0.5rem 0.75rem;
+    border-left: 3px solid var(--follow-agent-color, #888888);
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 0 6px 6px 0;
+    font-style: italic;
+    font-size: 0.8rem;
+    color: #c4c4d8;
+    line-height: 1.55;
+    min-height: 2.5em;
+    text-align: left;
+    width: 100%;
+    transition: opacity 0.55s ease;
+}
+
+.follow-scene-thought {
+    margin: 0.5rem 0 0;
+    font-style: italic;
+    font-size: 0.76rem;
+    color: #6b6b8a;
+    line-height: 1.55;
+    min-height: 2.5em;
+    transition: opacity 0.55s ease;
+}
+
+.follow-scene-speech.vignette-hidden,
+.follow-scene-thought.vignette-hidden { opacity: 0; }
+
+.follow-scene-portrait.portrait-speaking {
+    animation: portrait-breathe 3.5s ease-in-out infinite,
+               portrait-speak-glow 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes portrait-speak-glow {
+    from { filter: drop-shadow(0 0 4px var(--follow-agent-color, #888888)); }
+    to   { filter: drop-shadow(0 0 12px var(--follow-agent-color, #888888)); }
+}
+
+/* ── Solo Follow config ──────────────────────────────────── */
+
+.solo-follow-group {
+    gap: 0.5rem;
+}
+
+/* ── Follow HUD feed header ─────────────────────────────── */
+.hud-feed-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 2px 4px;
+    border-bottom: 1px solid #1a1a2e;
+    flex-shrink: 0;
+}
+
+.hud-feed-title {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #3a3a5a;
+}
+
+.btn-follow-dev {
+    background: transparent;
+    border: 1px solid #22223a;
+    color: #3a3a5a;
+    border-radius: 5px;
+    padding: 1px 6px;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.btn-follow-dev:hover { border-color: #52525b; color: #71717a; }
+.btn-follow-dev.follow-dev-active {
+    border-color: #6366f1;
+    color: #a5b4fc;
+    background: #1a1a38;
+}
+
+/* ── Follow HUD fog-of-war notice ───────────────────────── */
+.follow-fog-notice {
+    margin-top: auto;
+    padding: 0.6rem 0.75rem;
+    border: 1px dashed #22223a;
+    border-radius: 8px;
+    text-align: center;
+    font-size: 0.68rem;
+    color: #2a2a45;
+    letter-spacing: 0.04em;
+}
+
+.solo-follow-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.88rem;
+    color: #a5b4fc;
+    cursor: pointer;
+    user-select: none;
+}
+
+.solo-follow-toggle input[type="checkbox"] {
+    accent-color: #818cf8;
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+.solo-agent-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding-left: 1.5rem;
+}
+
+.solo-agent-option {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.65rem;
+    border: 1px solid #22223a;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    color: #6b6b88;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.solo-agent-option:hover { border-color: #4f46e5; color: #a5b4fc; }
+
+.solo-agent-option.solo-selected {
+    border-color: #818cf8;
+    color: #a5b4fc;
+    background: rgba(99, 91, 255, 0.08);
+}
+
+.solo-agent-option input[type="radio"] {
+    accent-color: #818cf8;
+    cursor: pointer;
+}
+
+/* ── Solo Follow sim grid ────────────────────────────────── */
+
+.sim-panels--solo {
+    grid-template-columns: minmax(0, 1fr) minmax(340px, 500px) !important;
+}
+
+@media (max-width: 1200px) {
+    .sim-panels--solo { grid-template-columns: 1fr !important; }
+}

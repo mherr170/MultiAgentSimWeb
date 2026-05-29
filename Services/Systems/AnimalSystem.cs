@@ -163,8 +163,25 @@ public class AnimalSystem : IAnimalSystem
         animal.State = AnimalState.Idle;
         animal.RoundsInCurrentState++;
 
-        if (_rng.NextDouble() < 0.40)
+        // Companion follow behaviour — move toward feeder while bond lasts
+        if (animal.CompanionRoundsLeft > 0)
+        {
+            animal.CompanionRoundsLeft--;
+            if (!string.IsNullOrEmpty(animal.CompanionOf))
+            {
+                var cpos = _world.GetAgentPosition(animal.CompanionOf);
+                if (cpos.x >= 0)
+                {
+                    int dist = Math.Max(Math.Abs(animal.X - cpos.x), Math.Abs(animal.Y - cpos.y));
+                    if (dist > 1) MoveToward(animal, cpos.x, cpos.y);
+                }
+            }
+            if (animal.CompanionRoundsLeft == 0) animal.CompanionOf = null;
+        }
+        else if (_rng.NextDouble() < 0.40)
+        {
             WanderAnimal(animal);
+        }
 
         // Check if the animal's current cell has an armed trap
         var trap = _world.Items.TakeTopTrapAt(animal.X, animal.Y);
@@ -332,6 +349,8 @@ public class AnimalSystem : IAnimalSystem
             _world.LogDev($"[{agentName}] prone_to_panic → extra stress +{panicStress:F1}");
         }
 
+        _world.Mood.GetMood(agentName).AdjustTrauma(+8f);
+
         string healthNote = tpl.AttackHealthDamage > 0 ? $", -{tpl.AttackHealthDamage:F0} health" : "";
         _world.LogAt(animal.X, animal.Y,
             $"A {tpl.DisplayName} attacks {agentName}! " +
@@ -412,11 +431,25 @@ public class AnimalSystem : IAnimalSystem
             float killMoodBonus = personality.HasFlag("risk_taker") ? +5f : 0f;
             _world.Mood.GetMood(agentName).AdjustMood(killMoodBase + killMoodBonus);
             _world.Mood.GetMood(agentName).AdjustStress(animal.Size == AnimalSize.Large ? -10f : -3f);
+            if (animal.Size == AnimalSize.Large)
+            {
+                _world.Mood.GetMood(agentName).AdjustHope(+6f);
+                _world.LogDev($"[{agentName}] large kill → hope +6");
+            }
             return $"kills the {tpl.DisplayName}";
         }
 
+        // Small animals flee when struck but not killed
+        if (animal.Size == AnimalSize.Small)
+        {
+            animal.State = AnimalState.Fleeing;
+            WanderAnimal(animal);
+            WanderAnimal(animal);
+            return $"strikes the {tpl.DisplayName} — it bolts! ({animal.Health:F0} HP remaining)";
+        }
+
         // Large animals counter-attack when not already fleeing
-        if (animal.Size == AnimalSize.Large && animal.State != AnimalState.Fleeing)
+        if (animal.State != AnimalState.Fleeing)
         {
             ApplyAnimalAttack(animal, agentName);
             return $"injures the {tpl.DisplayName} ({animal.Health:F0} HP — it counter-attacks!)";
@@ -518,6 +551,93 @@ public class AnimalSystem : IAnimalSystem
             _world.Memory.AddMemory(agentName,
                 $"Tried to scare a {tpl.DisplayName} — it attacked me instead!");
             return $"fails to scare the {tpl.DisplayName} — it attacks!";
+        }
+    }
+
+    public string? TryFeedAnimal(string agentName, string animalIdStr)
+    {
+        var pos = _world.GetAgentPosition(agentName);
+        if (pos.x < 0) return null;
+
+        var animal = _animals.FirstOrDefault(a =>
+            a.Id.ToString() == animalIdStr &&
+            a.State != AnimalState.Dead &&
+            Math.Max(Math.Abs(a.X - pos.x), Math.Abs(a.Y - pos.y)) <= 2);
+        if (animal == null) return null;
+
+        var tpl = AnimalDefinitions.Get(animal.Type);
+
+        // Require a food item in inventory
+        var inv      = _world.Items.GetInventory(agentName);
+        var foodItem = inv.FirstOrDefault(i => i.Definition.HungerRestore > 0);
+        if (foodItem == null) return "— no food in inventory to offer";
+
+        float foodValue = foodItem.Definition.HungerRestore;
+        _world.Items.TryConsume(agentName, foodItem.InstanceId.ToString());
+
+        var personality = _world.GetPersonality(agentName);
+
+        if (animal.Size == AnimalSize.Small)
+        {
+            // Small animals: bond with feeder for 3 rounds, follow them around
+            animal.CompanionOf         = agentName;
+            animal.CompanionRoundsLeft = 3;
+            animal.State               = AnimalState.Idle;
+
+            float moodBoost   = animal.Type == AnimalType.StreetCat ? 14f : 8f;
+            float stressRelief = animal.Type == AnimalType.StreetCat ? -12f : -6f;
+            string flavorNote = animal.Type == AnimalType.StreetCat
+                ? "The cat inches forward and eats from your hand. Something shifts between you."
+                : $"The {tpl.DisplayName} takes the food cautiously, eyeing you.";
+
+            if (_world.Mood.Has(agentName))
+            {
+                var m = _world.Mood.GetMood(agentName);
+                m.AdjustMood(moodBoost);
+                m.AdjustStress(stressRelief);
+            }
+            _world.LogAt(pos.x, pos.y, $"{agentName} feeds a {tpl.DisplayName} with {foodItem.DisplayName}. {flavorNote}");
+            _world.LogDev($"[{agentName}] feed {tpl.DisplayName} → mood +{moodBoost}  stress {stressRelief}  companion 3 rounds");
+            _world.Memory.AddMemory(agentName, $"Fed a {tpl.DisplayName} — it follows me now.");
+            return $"feeds the {tpl.DisplayName} — it warms to you (follows for ~3 turns)";
+        }
+        else
+        {
+            // Large animals: food-quality + animal_handler bonus affects distraction chance.
+            // Feeding is safe — no counter-attack on failure.
+            float feedChance = 0.35f + Math.Min(0.35f, foodValue / 100f);
+            bool  isHandler  = personality.IsAnimalHandler;
+            if (isHandler) feedChance += 0.15f;
+
+            if (_rng.NextDouble() < feedChance)
+            {
+                animal.State           = AnimalState.Idle;
+                animal.TargetAgentName = null;
+                WanderAnimal(animal);
+                WanderAnimal(animal);
+
+                if (_world.Mood.Has(agentName))
+                {
+                    var m = _world.Mood.GetMood(agentName);
+                    m.AdjustMood(+10f);
+                    m.AdjustStress(-8f);
+                }
+                _world.LogAt(pos.x, pos.y,
+                    $"{agentName} tosses {foodItem.DisplayName} to the {tpl.DisplayName}. It stops and eats.");
+                _world.LogDev($"[{agentName}] feed large {tpl.DisplayName} success (chance {feedChance:F2}) → mood +10  stress -8");
+                _world.Memory.AddMemory(agentName, $"Distracted a {tpl.DisplayName} with {foodItem.DisplayName} — it backed off.");
+                string handlerNote = isHandler ? " [animal handler]" : "";
+                return $"distracts the {tpl.DisplayName} with food — it backs off{handlerNote}";
+            }
+            else
+            {
+                // Ignored — food wasted, no retaliation
+                _world.LogAt(pos.x, pos.y,
+                    $"{agentName} tosses food at the {tpl.DisplayName} — it sniffs and ignores it.");
+                _world.LogDev($"[{agentName}] feed large {tpl.DisplayName} failed (chance {feedChance:F2}) — ignored");
+                _world.Memory.AddMemory(agentName, $"Tried to distract a {tpl.DisplayName} with food — it ignored it.");
+                return $"tosses food at the {tpl.DisplayName} — it ignores it ({foodItem.DisplayName} wasted)";
+            }
         }
     }
 

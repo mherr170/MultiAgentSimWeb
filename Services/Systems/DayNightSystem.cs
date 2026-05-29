@@ -9,11 +9,11 @@ public class DayNightSystem : IDayNightSystem
 
     // Items that count as light sources (any with remaining uses).
     private static readonly HashSet<string> LightSourceIds =
-        ["flashlight", "candle", "lighter"];
+        ["flashlight", "candle", "lighter", "matches", "improvised_lantern", "glow_stick", "filled_oil_lamp", "torch"];
 
     // Items that provide warmth against the cold.
     private static readonly HashSet<string> WarmthItemIds =
-        ["blanket", "winter_coat"];
+        ["blanket", "winter_coat", "leather_wrap", "sleeping_bag", "fur_vest"];
 
     // Terrain types treated as sheltered indoors.
     private static readonly HashSet<TerrainType> IndoorTerrains =
@@ -96,7 +96,9 @@ public class DayNightSystem : IDayNightSystem
         if (!indoors && !HasWarmth(agentName))
         {
             _world.Survival.AddHunger(agentName, -1f);
-            _world.LogDev($"[{agentName}] cold night outdoors → hunger -1");
+            if (_world.Mood.Has(agentName))
+                _world.Mood.GetMood(agentName).AdjustTrauma(+1f);
+            _world.LogDev($"[{agentName}] cold night outdoors → hunger -1  trauma +1");
         }
 
         // ── Rest bonus — indoors and stationary (claustrophobic agents can't settle indoors) ──────────

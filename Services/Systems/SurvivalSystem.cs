@@ -17,6 +17,10 @@ public class SurvivalSystem : ISurvivalSystem
     private readonly Dictionary<string, float> _maxHealth = new();
     private readonly Dictionary<string, float> _stamina    = new();
     private readonly Dictionary<string, int>   _idleTurns  = new();
+    // Tombstone: names of agents that have been fully removed via RemoveAgent().
+    // Needed because GetValueOrDefault returns 1f (alive default) for missing keys,
+    // so IsDead() would return false for removed agents without this explicit set.
+    private readonly HashSet<string> _dead = new();
     private WorldState _world = null!;
 
     public void Attach(WorldState world) => _world = world;
@@ -40,6 +44,7 @@ public class SurvivalSystem : ISurvivalSystem
 
     public void RemoveAgent(string agentName)
     {
+        _dead.Add(agentName);
         _hunger.Remove(agentName);
         _thirst.Remove(agentName);
         _health.Remove(agentName);
@@ -59,6 +64,7 @@ public class SurvivalSystem : ISurvivalSystem
     }
 
     public bool IsDead(string agentName) =>
+        _dead.Contains(agentName) ||
         _hunger.GetValueOrDefault(agentName, 1f) <= 0f ||
         _thirst.GetValueOrDefault(agentName, 1f) <= 0f ||
         _health.GetValueOrDefault(agentName, 1f) <= 0f;

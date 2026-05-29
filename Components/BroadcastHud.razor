@@ -1,0 +1,60 @@
+<div class="broadcast-hud">
+
+    <aside class="hud-left">
+        <ActiveAgentPanel Agent="@ViewModel.Spotlight" />
+
+        <div class="hud-roster">
+            @foreach (var agent in ViewModel.Roster)
+            {
+                <AgentStatusCard Agent="@agent" OnClicked="OnAgentClicked" />
+            }
+        </div>
+    </aside>
+
+    <section class="hud-map">
+        <MapView World="@World"
+                 AgentColors="@ViewModel.AgentColorHex"
+                 CurrentAgent="@ViewModel.CurrentAgentName"
+                 OnAgentClicked="OnAgentClicked"
+                 CompactHeader="true" />
+        <div class="hud-controls-overlay">
+            @if (ViewModel.IsPaused)
+            {
+                <button class="btn-resume"     @onclick="OnResume"      disabled="@(ViewModel.CurrentAgentName != null)">▶ Resume</button>
+                <button class="btn-step-round" @onclick="() => OnStep.InvokeAsync(1)"  disabled="@(ViewModel.CurrentAgentName != null)">⇒ Round</button>
+                <button class="btn-step-round" @onclick="() => OnStep.InvokeAsync(2)"  disabled="@(ViewModel.CurrentAgentName != null)">⇒ 2x</button>
+                <button class="btn-step-round" @onclick="() => OnStep.InvokeAsync(5)"  disabled="@(ViewModel.CurrentAgentName != null)">⇒ 5x</button>
+            }
+            else
+            {
+                <button class="btn-pause" @onclick="OnPause">⏸ Pause</button>
+            }
+            <button class="btn-stop" @onclick="OnStop">■ Stop</button>
+        </div>
+    </section>
+
+    <aside class="hud-feed">
+        <BroadcastEventFeed Events="@ViewModel.NarrativeEvents" ColorResolver="@ColorResolver" />
+    </aside>
+
+    <footer class="hud-chat">
+        <ChatStripView Events="@ViewModel.ChatEvents" ColorResolver="@ColorResolver" />
+    </footer>
+
+</div>
+
+@code {
+    /// The pre-built view model — all display data lives here.
+    [Parameter, EditorRequired] public BroadcastViewModel ViewModel { get; set; } = null!;
+
+    /// WorldState is kept separate because MapView needs it directly for rendering.
+    /// It is not accessed by BroadcastHud itself.
+    [Parameter, EditorRequired] public WorldState World { get; set; } = null!;
+
+    [Parameter] public EventCallback<string> OnAgentClicked { get; set; }
+    [Parameter] public EventCallback         OnResume       { get; set; }
+    [Parameter] public EventCallback         OnPause        { get; set; }
+    [Parameter] public EventCallback         OnStop         { get; set; }
+    [Parameter] public EventCallback<int>    OnStep         { get; set; }
+    [Parameter] public Func<string, string>  ColorResolver  { get; set; } = _ => "#52525b";
+}

@@ -170,7 +170,7 @@ public class WorldStateTests
         var itemOnGround = world.GetItemsAt(13, 13).First();
         var ok = world.TryPickUp("Alice", itemOnGround.InstanceId.ToString());
 
-        Assert.True(ok);
+        Assert.NotNull(ok);
         Assert.Contains(world.GetInventory("Alice"), i => i.InstanceId == itemOnGround.InstanceId);
         Assert.DoesNotContain(world.GetItemsAt(13, 13), i => i.InstanceId == itemOnGround.InstanceId);
     }
@@ -185,7 +185,7 @@ public class WorldStateTests
         var farItem = world.GetItemsAt(13, 13).First();
         var ok = world.TryPickUp("Alice", farItem.InstanceId.ToString());
 
-        Assert.False(ok);
+        Assert.Null(ok);
         Assert.Empty(world.GetInventory("Alice"));
     }
 
@@ -195,7 +195,7 @@ public class WorldStateTests
         var world = MakeWorldWithAgent("Alice", 13, 13);
         world.InitializeItems();
 
-        Assert.False(world.TryPickUp("Alice", Guid.NewGuid().ToString()));
+        Assert.Null(world.TryPickUp("Alice", Guid.NewGuid().ToString()));
     }
 
     // ── TryDrop ──────────────────────────────────────────────────────────────
@@ -213,7 +213,7 @@ public class WorldStateTests
         world.MoveAgent("Alice", "N"); // now at (13,12)
         var ok = world.TryDrop("Alice", item.InstanceId.ToString());
 
-        Assert.True(ok);
+        Assert.NotNull(ok);
         Assert.Empty(world.GetInventory("Alice"));
         Assert.Contains(world.GetItemsAt(13, 12), i => i.InstanceId == item.InstanceId);
     }
@@ -222,7 +222,7 @@ public class WorldStateTests
     public void TryDrop_ItemNotInInventory_ReturnsFalse()
     {
         var world = MakeWorldWithAgent("Alice");
-        Assert.False(world.TryDrop("Alice", Guid.NewGuid().ToString()));
+        Assert.Null(world.TryDrop("Alice", Guid.NewGuid().ToString()));
     }
 
     // ── TryUse ───────────────────────────────────────────────────────────────
@@ -275,7 +275,7 @@ public class WorldStateTests
 
         var ok = world.TryGive("Alice", item.InstanceId.ToString(), "Bob");
 
-        Assert.True(ok);
+        Assert.NotNull(ok);
         Assert.Empty(world.GetInventory("Alice"));
         Assert.Contains(world.GetInventory("Bob"), i => i.InstanceId == item.InstanceId);
     }
@@ -292,7 +292,7 @@ public class WorldStateTests
 
         var ok = world.TryGive("Alice", item.InstanceId.ToString(), "Bob");
 
-        Assert.False(ok);
+        Assert.Null(ok);
         Assert.Single(world.GetInventory("Alice")); // Alice still has it
     }
 

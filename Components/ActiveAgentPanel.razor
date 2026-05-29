@@ -1,0 +1,101 @@
+@if (Agent is null)
+{
+    <div class="active-panel active-panel-empty">
+        <span class="active-panel-waiting">Waiting for simulation…</span>
+    </div>
+}
+else
+{
+    var hpPct      = Agent.MaxHp > 0 ? Agent.Hp / Agent.MaxHp * 100f : 0f;
+    var moodAbs    = Math.Abs(Agent.Mood);
+    var moodDir    = Agent.Mood >= 0 ? "pos" : "neg";
+
+    <div class="active-panel @(Agent.IsDead ? "active-panel-dead" : Agent.IsThinking ? "active-panel-thinking" : "")"
+         style="--spotlight-color: @Agent.ColorHex">
+
+        <div class="active-panel-header">
+            <PixelPortrait AgentName="@Agent.Name" AgentColor="@Agent.ColorHex" PixelSize="5" />
+            <div class="active-panel-identity">
+                <div class="active-panel-name" style="color: @Agent.ColorHex">@Agent.Name</div>
+                <span class="active-panel-badge @(Agent.IsDead ? "badge-dead" : Agent.IsThinking ? "badge-thinking" : "badge-idle")">
+                    @if (Agent.IsThinking) { <span class="thinking-dot"></span> }
+                    @(Agent.IsDead ? "Dead" : Agent.IsThinking ? "Thinking…" : "Last active")
+                </span>
+            </div>
+        </div>
+
+        @if (!Agent.IsDead)
+        {
+            <div class="active-panel-meters">
+                <div class="active-meter-row">
+                    <span class="active-meter-label">HP</span>
+                    <div class="active-meter-bar">
+                        <div class="active-meter-fill @HpClass(hpPct)" style="width:@(hpPct.ToString("F0"))%"></div>
+                    </div>
+                    <span class="active-meter-value">@Agent.Hp.ToString("F0")</span>
+                </div>
+                <div class="active-meter-row">
+                    <span class="active-meter-label">Hunger</span>
+                    <div class="active-meter-bar">
+                        <div class="active-meter-fill hunger" style="width:@(Agent.Hunger.ToString("F0"))%"></div>
+                    </div>
+                    <span class="active-meter-value">@Agent.Hunger.ToString("F0")</span>
+                </div>
+                <div class="active-meter-row">
+                    <span class="active-meter-label">Thirst</span>
+                    <div class="active-meter-bar">
+                        <div class="active-meter-fill thirst" style="width:@(Agent.Thirst.ToString("F0"))%"></div>
+                    </div>
+                    <span class="active-meter-value">@Agent.Thirst.ToString("F0")</span>
+                </div>
+                <div class="active-meter-row">
+                    <span class="active-meter-label">Stamina</span>
+                    <div class="active-meter-bar">
+                        <div class="active-meter-fill stamina" style="width:@(Agent.Stamina.ToString("F0"))%"></div>
+                    </div>
+                    <span class="active-meter-value">@Agent.Stamina.ToString("F0")</span>
+                </div>
+                <div class="active-meter-row">
+                    <span class="active-meter-label">Mood</span>
+                    <div class="active-meter-bar active-meter-mood-track">
+                        <div class="active-meter-fill mood-@moodDir" style="width:@(moodAbs.ToString("F0"))%"></div>
+                    </div>
+                    <span class="active-meter-value">@Agent.Mood.ToString("+0;-0;0")</span>
+                </div>
+            </div>
+
+            @if (Agent.LastThought is not null)
+            {
+                <div class="active-thought">
+                    <span class="active-thought-icon">💭</span>
+                    <span class="active-thought-text">@Agent.LastThought</span>
+                </div>
+            }
+
+            @if (Agent.LastAction is not null)
+            {
+                <div class="active-action">
+                    <span class="active-action-icon">⚡</span>
+                    <span class="active-action-text">@Agent.LastAction</span>
+                </div>
+            }
+
+            @if (Agent.Inventory.Count > 0)
+            {
+                <div class="active-inventory">
+                    @foreach (var item in Agent.Inventory)
+                    {
+                        <span class="active-inv-chip">@item</span>
+                    }
+                </div>
+            }
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public ActiveAgentViewModel? Agent { get; set; }
+
+    private static string HpClass(float pct) =>
+        pct < 30f ? "stress-high" : pct < 60f ? "stress-mid" : "stress-low";
+}

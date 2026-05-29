@@ -35,8 +35,14 @@
                     <textarea @bind="agentDefs[idx].Persona" rows="2"
                               placeholder="Personality and goals..."
                               disabled="@Sim.IsRunning" />
-                    <button class="btn-remove" @onclick="() => RemoveAgent(idx)"
-                            disabled="@(Sim.IsRunning || agentDefs.Count <= 1)">&#x2715;</button>
+                    <div class="agent-row-actions">
+                        <button class="btn-prefollow @(_preFollowIndex == idx ? "prefollow-active" : "")"
+                                title="@(_preFollowIndex == idx ? "Following this agent on start" : "Follow this agent when simulation starts")"
+                                disabled="@Sim.IsRunning"
+                                @onclick="() => TogglePreFollow(idx)">👁</button>
+                        <button class="btn-remove" @onclick="() => RemoveAgent(idx)"
+                                disabled="@(Sim.IsRunning || agentDefs.Count <= 1)">&#x2715;</button>
+                    </div>
                 </div>
             }
             <button class="btn-add" @onclick="AddAgent" disabled="@Sim.IsRunning">+ Add Agent</button>
@@ -102,9 +108,10 @@
             {
                 @if (Sim.IsPaused)
                 {
-                    <button class="btn-resume"     @onclick="() => Sim.Resume()"   disabled="@(Sim.CurrentAgent != null)">▶ Resume</button>
-                    <button class="btn-step"       @onclick="() => Sim.Step()"     disabled="@(Sim.CurrentAgent != null)">&#x2192; Step</button>
-                    <button class="btn-step-round" @onclick="() => Sim.StepRound()" disabled="@(Sim.CurrentAgent != null)">&#x21D2; Round</button>
+                    <button class="btn-resume"     @onclick="() => Sim.Resume()"      disabled="@(Sim.CurrentAgent != null)">▶ Resume</button>
+                    <button class="btn-step-round" @onclick="() => Sim.StepRound()"   disabled="@(Sim.CurrentAgent != null)">&#x21D2; Round</button>
+                    <button class="btn-step-round" @onclick="() => Sim.StepRounds(2)" disabled="@(Sim.CurrentAgent != null)">&#x21D2; 2x</button>
+                    <button class="btn-step-round" @onclick="() => Sim.StepRounds(5)" disabled="@(Sim.CurrentAgent != null)">&#x21D2; 5x</button>
                 }
                 else
                 {
@@ -121,12 +128,86 @@
         <div class="config-error">@configError</div>
     }
 
-    @if (Sim.World != null)
+    @if (_broadcastMode && Sim.IsRunning && Sim.World != null && _broadcastViewModel != null)
     {
+        var vm = _broadcastViewModel;
+        <button class="broadcast-config-toggle" @onclick="ExitBroadcast">⚙ Config</button>
+        <BroadcastHud ViewModel="@vm"
+                      World="Sim.World"
+                      OnAgentClicked="EventCallback.Factory.Create<string>(this, InspectAgent)"
+                      OnResume="EventCallback.Factory.Create(this, () => Sim.Resume())"
+                      OnPause="EventCallback.Factory.Create(this, () => Sim.Pause())"
+                      OnStop="EventCallback.Factory.Create(this, () => Sim.Stop())"
+                      OnStep="EventCallback.Factory.Create<int>(this, n => { if (n == 1) Sim.StepRound(); else Sim.StepRounds(n); })"
+                      ColorResolver="@AlertColorHex" />
+    }
+    else if (IsLockedFollow && Sim.IsRunning && Sim.World != null)
+    {
+        var followColor = Sim.AgentColorHex.TryGetValue(_followedAgent!, out var fc) ? fc : "#888888";
+        <button class="broadcast-config-toggle" style="--spotlight-color:@followColor"
+                @onclick="ExitFollowMode">✕ Exit Follow</button>
+        <div class="follow-hud">
+
+            <aside class="hud-left">
+                <ActiveAgentPanel Agent="@BuildFollowSpotlight()" />
+                <div class="follow-fog-notice">
+                    <span>👁 Fog of war — other agents hidden</span>
+                </div>
+            </aside>
+
+            <section class="hud-map">
+                <MapView World="Sim.World" AgentColors="@MapAgentColors"
+                         CurrentAgent="@Sim.CurrentAgent?.Name"
+                         OnAgentClicked="EventCallback.Factory.Create<string>(this, InspectAgent)"
+                         FollowedAgent="@_followedAgent"
+                         CompactHeader="true" />
+                <div class="hud-controls-overlay">
+                    @if (Sim.IsPaused)
+                    {
+                        <button class="btn-resume"     @onclick="() => Sim.Resume()"      disabled="@(Sim.CurrentAgent != null)">▶ Resume</button>
+                        <button class="btn-step-round" @onclick="() => Sim.StepRound()"   disabled="@(Sim.CurrentAgent != null)">⇒ Round</button>
+                        <button class="btn-step-round" @onclick="() => Sim.StepRounds(2)" disabled="@(Sim.CurrentAgent != null)">⇒ 2x</button>
+                        <button class="btn-step-round" @onclick="() => Sim.StepRounds(5)" disabled="@(Sim.CurrentAgent != null)">⇒ 5x</button>
+                    }
+                    else
+                    {
+                        <button class="btn-pause" @onclick="() => Sim.Pause()">⏸ Pause</button>
+                    }
+                    <button class="btn-stop" @onclick="() => Sim.Stop()">■ Stop</button>
+                    <button class="enter-broadcast-btn" @onclick="() => { ExitFollowMode(); EnterBroadcast(); }" title="Switch to Broadcast mode">⛶</button>
+                </div>
+            </section>
+
+            <aside class="hud-feed">
+                <div class="hud-feed-header">
+                    <span class="hud-feed-title">@(_followShowAll ? "All Agents" : _followedAgent)</span>
+                    <button class="btn-follow-dev @(_followShowAll ? "follow-dev-active" : "")"
+                            title="@(_followShowAll ? "Showing all agents — click to restrict to followed agent" : "Show all agents (dev)")"
+                            @onclick="() => _followShowAll = !_followShowAll">dev</button>
+                </div>
+                <BroadcastEventFeed Events="@FollowFeedEvents" ColorResolver="@AlertColorHex" />
+            </aside>
+
+        </div>
+    }
+    else if (Sim.World != null)
+    {
+        @if (Sim.IsRunning && !_broadcastMode && !_followMode)
+        {
+            <button class="enter-broadcast-btn" @onclick="EnterBroadcast">⛶ Broadcast</button>
+            <button class="enter-follow-btn"    @onclick="EnterFollowMode">👁 Follow</button>
+        }
+        @if (_followMode && Sim.IsRunning)
+        {
+            <div class="follow-mode-bar">
+                <span class="following-hint">👁 Follow mode — click any agent on the map to follow them</span>
+                <button class="btn-exit-follow" @onclick="ExitFollowMode">✕ Exit</button>
+            </div>
+        }
         <div class="sim-panels">
-            <MapView World="Sim.World" AgentColors="Sim.AgentColorHex"
+            <MapView World="Sim.World" AgentColors="@Sim.AgentColorHex"
                      CurrentAgent="@Sim.CurrentAgent?.Name"
-                     OnAgentClicked="InspectAgent" />
+                     OnAgentClicked="HandleAgentClick" />
             <InventoryView World="Sim.World" AgentColors="Sim.AgentColorHex"
                            InspectedAgent="@_inspectedAgent"
                            CurrentAgent="@Sim.CurrentAgent?.Name"
@@ -158,7 +239,8 @@
                     .Select((evt, idx) => (evt, idx))
                     .Where(x => (x.evt.Type == SimEventTypes.Death || x.evt.Type == SimEventTypes.Animal || x.evt.Type == SimEventTypes.AnimalAttack || x.evt.Type == SimEventTypes.DirectResponse)
                                 && !_dismissedAlerts.Contains(x.idx)
-                                && currentRound - x.evt.Round <= 5)
+                                && currentRound - x.evt.Round <= 5
+                                )
                     .TakeLast(3)
                     .ToList();
             }
@@ -235,7 +317,7 @@
                 @if (Sim.IsRunning && Sim.IsPaused)
                 {
                     <div class="paused-row">
-                        ⏸ Paused — click <strong>Resume</strong> to run automatically, <strong>Step</strong> to advance one agent turn, or <strong>Round</strong> to complete one full round.
+                        ⏸ Paused — click <strong>Resume</strong> to run automatically, or <strong>Round</strong> / <strong>2x</strong> / <strong>5x</strong> to step 1, 2, or 5 rounds.
                     </div>
                 }
                 else if (Sim.IsRunning && Sim.CurrentAgent != null)
@@ -285,25 +367,7 @@
             </div>
                 </div>
             }
-            @if (ChatEvents.Count > 0)
-            {
-                <div class="chat-strip" @ref="_chatStrip">
-                    @foreach (var ce in ChatEvents)
-                    {
-                        var cc = AlertColorHex(ce.AgentColor);
-                        <div class="chat-msg @(ce.Type == SimEventTypes.DirectResponse ? "chat-msg-reply" : "")"
-                             style="--cm-color: @cc">
-                            <div class="chat-msg-header">
-                                <PixelPortrait AgentName="@ce.AgentName" AgentColor="@cc" PixelSize="2" />
-                                <span class="chat-msg-name" style="color: @cc">@ce.AgentName</span>
-                                @if (ce.Type == SimEventTypes.DirectResponse)
-                                { <span class="chat-msg-tag">↩ replies</span> }
-                            </div>
-                            <div class="chat-msg-text">@ce.Content</div>
-                        </div>
-                    }
-                </div>
-            }
+            <ChatStripView Events="@ChatEvents" ColorResolver="@AlertColorHex" />
         </div>
     }
 </div>
@@ -376,6 +440,130 @@
         return groups;
     }
 
+    private bool _broadcastMode = false;
+    private string? _spotlightAgentName;
+    private BroadcastViewModel? _broadcastViewModel;
+    // Full agent roster frozen at sim start — includes dead agents for greyed-out roster cards.
+    private List<(string Name, string ColorHex)> _allAgents = [];
+
+    private void EnterBroadcast()
+    {
+        _broadcastMode = true;
+        RebuildBroadcastViewModel();
+    }
+    private void ExitBroadcast() => _broadcastMode = false;
+
+    // ── Follow mode ──────────────────────────────────────────────────────────
+    private bool _followMode = false;
+    private string? _followedAgent;
+    private int _preFollowIndex = -1; // index into agentDefs; -1 = none
+    private bool _followShowAll = false; // show all agents in follow feed (dev toggle)
+
+    private void TogglePreFollow(int idx) =>
+        _preFollowIndex = (_preFollowIndex == idx) ? -1 : idx;
+
+    private void EnterFollowMode()
+    {
+        _followMode    = true;
+        _followedAgent = null;
+        _inspectedAgent = null;
+    }
+
+    private void ExitFollowMode()
+    {
+        _followMode       = false;
+        _followedAgent    = null;
+        _followShowAll    = false;
+        Sim.FollowedAgent = null;
+    }
+
+    private void HandleAgentClick(string name)
+    {
+        if (_followMode)
+        {
+            _followedAgent    = (_followedAgent == name) ? null : name;
+            Sim.FollowedAgent = _followedAgent;
+        }
+        else
+        {
+            InspectAgent(name);
+        }
+    }
+
+    // True when following a specific agent — activates the follow HUD layout.
+    private bool IsLockedFollow => _followMode && _followedAgent != null;
+
+    private static readonly HashSet<string> SuppressedFeedTypes = [SimEventTypes.Diag, "dev", "llm", "error"];
+
+    // Feed events for the follow HUD: filtered to followed agent unless dev mode is on.
+    private IReadOnlyList<SimEvent> FollowFeedEvents =>
+        Sim.Events.ToList()
+           .Where(e => !SuppressedFeedTypes.Contains(e.Type) && (_followShowAll || PassesFollowFilter(e)))
+           .TakeLast(150)
+           .Reverse()
+           .ToList();
+
+    // Only the followed agent's color so other agents are invisible on the map.
+    private Dictionary<string, string> MapAgentColors =>
+        _followedAgent != null
+            ? Sim.AgentColorHex.Where(kv => kv.Key == _followedAgent).ToDictionary(kv => kv.Key, kv => kv.Value)
+            : Sim.AgentColorHex;
+
+    private bool PassesFollowFilter(SimEvent evt) =>
+        _followedAgent == null ||
+        evt.Type == SimEventTypes.Round ||
+        evt.AgentName == _followedAgent ||
+        (evt.WitnessedBy != null && evt.WitnessedBy.Contains(_followedAgent));
+
+    private ActiveAgentViewModel? BuildFollowSpotlight()
+    {
+        if (_followedAgent == null || Sim.World == null) return null;
+        var colorHex = Sim.AgentColorHex.TryGetValue(_followedAgent, out var c) ? c : "#888888";
+        var events   = Sim.Events.ToList();
+        bool isDead  = Sim.World.IsDead(_followedAgent);
+        var mood     = Sim.World.GetMood(_followedAgent);
+        return new ActiveAgentViewModel(
+            Name:        _followedAgent,
+            ColorHex:    colorHex,
+            Hp:          Sim.World.GetHealth(_followedAgent),
+            MaxHp:       Sim.World.GetMaxHealth(_followedAgent),
+            Hunger:      Sim.World.GetHunger(_followedAgent),
+            Thirst:      Sim.World.GetThirst(_followedAgent),
+            Stamina:     Sim.World.GetStamina(_followedAgent),
+            Mood:        mood.Mood,
+            Stress:      mood.Stress,
+            LastThought: isDead ? null : LastFollowEventContent(events, SimEventTypes.Thought),
+            LastAction:  isDead ? null : LastFollowEventContent(events, SimEventTypes.Action),
+            Inventory:   isDead ? [] : Sim.World.GetInventory(_followedAgent).Select(i => i.DisplayName).Take(5).ToList(),
+            IsThinking:  Sim.CurrentAgent?.Name == _followedAgent,
+            IsDead:      isDead);
+    }
+
+    private string? LastFollowEventContent(List<SimEvent> events, string type)
+    {
+        for (int i = events.Count - 1; i >= 0; i--)
+        {
+            var e = events[i];
+            if (e.AgentName == _followedAgent && e.Type == type)
+                return e.Content;
+        }
+        return null;
+    }
+
+    private void RebuildBroadcastViewModel()
+    {
+        if (Sim.World == null) return;
+        _broadcastViewModel = BroadcastViewModelBuilder.Build(
+            world:              Sim.World,
+            agentColorHex:      Sim.AgentColorHex,
+            allAgents:          _allAgents,
+            events:             Sim.Events.ToList(),
+            currentAgentName:   Sim.CurrentAgent?.Name,
+            spotlightAgentName: _spotlightAgentName,
+            isRunning:          Sim.IsRunning,
+            isPaused:           Sim.IsPaused);
+    }
+
     private string? _inspectedAgent;
     private void InspectAgent(string name) => _inspectedAgent = (_inspectedAgent == name) ? null : name;
     private void CloseInspector() => _inspectedAgent = null;
@@ -407,14 +595,14 @@
             .ToList();
 
         if (agentDefs.Count == 0)
-            agentDefs.Add(new AgentDefinition { Name = "Agent 1", Persona = "" });
+            for (int i = 1; i <= 6; i++)
+                agentDefs.Add(new AgentDefinition { Name = $"Agent {i}", Persona = "" });
     }
 
     private string? configError;
     private bool _verbose = false;
     private bool _summaryDismissed = false;
     private ElementReference _logPanel;
-    private ElementReference _chatStrip;
     private HashSet<string> _filteredAgents = new();
     private HashSet<string> _filteredTypes  = new();
     private bool _importantOnly = false;
@@ -453,13 +641,8 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (Sim.Events.Count > 0 || Sim.IsRunning)
-        {
-            try { await JS.InvokeVoidAsync("scrollToTop", _logPanel); }
-            catch { /* panel not yet in DOM */ }
-            try { await JS.InvokeVoidAsync("scrollToRight", _chatStrip); }
-            catch { /* chat strip not yet in DOM */ }
-        }
+        if (!_broadcastMode && (Sim.Events.Count > 0 || Sim.IsRunning))
+            try { await JS.InvokeVoidAsync("scrollToTop", _logPanel); } catch { }
     }
 
     private void ToggleAgentFilter(string name)
@@ -532,12 +715,70 @@
         Sim.OnStateChanged -= HandleStateChanged;
     }
 
-    private Task HandleStateChanged() => InvokeAsync(StateHasChanged);
+    private async Task HandleStateChanged()
+    {
+        // Capture the full roster once, before any agent can die.
+        // Dead agents are removed from AgentColorHex so we must freeze this early.
+        if (_allAgents.Count == 0 && Sim.AgentColorHex.Count > 0)
+            _allAgents = Sim.AgentColorHex.Select(kv => (kv.Key, kv.Value)).ToList();
+
+        // Track the spotlight agent: always the most recent non-null CurrentAgent.
+        // Held across turns so the panel doesn't blank between agents.
+        if (Sim.CurrentAgent != null)
+            _spotlightAgentName = Sim.CurrentAgent.Name;
+
+        if (!Sim.IsRunning)
+        {
+            _broadcastMode    = false;
+            _followMode       = false;
+            _followedAgent    = null;
+            _followShowAll    = false;
+            _spotlightAgentName = null;
+        }
+
+        // If the followed agent died, un-follow them.
+        // Guard on AgentColorHex.Count so this doesn't fire during LLM warmup
+        // when the dictionary is still empty but _followedAgent is already set.
+        if (_followedAgent != null && Sim.AgentColorHex.Count > 0 && !Sim.AgentColorHex.ContainsKey(_followedAgent))
+        {
+            _followedAgent    = null;
+            Sim.FollowedAgent = null;
+        }
+
+        if (_broadcastMode)
+            RebuildBroadcastViewModel();
+
+        try
+        {
+            await InvokeAsync(StateHasChanged).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (TimeoutException)
+        {
+            // Render took too long — skip this update rather than blocking the sim loop.
+        }
+        catch (ObjectDisposedException)
+        {
+            // Circuit was disposed (tab closed / navigated away) — ignore.
+        }
+        catch (InvalidOperationException)
+        {
+            // Circuit disconnected — ignore.
+        }
+        catch (OperationCanceledException)
+        {
+            // Circuit was cancelled (tab backgrounded, SignalR blip) — ignore.
+        }
+    }
 
     private void AddAgent() =>
         agentDefs.Add(new AgentDefinition { Name = $"Agent {agentDefs.Count + 1}", Persona = "" });
 
-    private void RemoveAgent(int index) => agentDefs.RemoveAt(index);
+    private void RemoveAgent(int index)
+    {
+        agentDefs.RemoveAt(index);
+        if (_preFollowIndex == index)       _preFollowIndex = -1;
+        else if (_preFollowIndex > index)   _preFollowIndex--;
+    }
 
     private async Task StartSimulation()
     {
@@ -575,6 +816,19 @@
         _dismissedAlerts.Clear();
         _filteredAgents.Clear();
         _filteredTypes.Clear();
+        _spotlightAgentName = null;
+        _broadcastViewModel = null;
+        _allAgents          = [];
+        _broadcastMode      = false;
+
+        // Apply pre-follow: if an agent is marked for follow, enter follow mode immediately
+        var preFollowName = _preFollowIndex >= 0 && _preFollowIndex < agentDefs.Count
+            ? agentDefs[_preFollowIndex].Name
+            : null;
+        _followMode       = !string.IsNullOrWhiteSpace(preFollowName);
+        _followedAgent    = string.IsNullOrWhiteSpace(preFollowName) ? null : preFollowName;
+        Sim.FollowedAgent = _followedAgent;
+
         try
         {
             await Sim.RunAsync(config);

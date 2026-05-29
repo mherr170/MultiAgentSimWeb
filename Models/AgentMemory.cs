@@ -4,7 +4,7 @@ namespace MultiAgentSimWeb.Models;
 
 public class AgentMemory
 {
-    private const int Capacity = 12;
+    private const int Capacity = 8;
     private readonly List<string> _entries = new();
 
     public void Add(string entry)

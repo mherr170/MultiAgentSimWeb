@@ -14,4 +14,9 @@ public interface IMoodSystem
 
     AgentMood GetMood(string agentName);
     bool Has(string agentName);
+
+    /// Applies trust-scaled grief (mood/stress/memory) to all surviving agents who had
+    /// positive trust in <paramref name="deceasedName"/>. Must be called before
+    /// <see cref="WorldState.KillAgent"/> so the deceased's position is still valid.
+    void ProcessDeath(string deceasedName);
 }

@@ -25,20 +25,22 @@ public class ItemSystem : IItemSystem
         "cereal_box", "dried_pasta", "antiseptic", "bandage_roll",
         "book", "playing_cards", "photo_album", "winter_coat",
         "batteries", "rope", "hand_sanitizer", "glass_bottle",
-        "tin_can", "mason_jar", "cooking_pot", "water_jug", "bucket"
+        "tin_can", "mason_jar", "cooking_pot", "water_jug", "bucket",
+        "oil_lamp", "cooking_oil", "sleeping_bag"
     ];
 
     private static readonly string[] _respawnStorefront =
     [
         "canned_food", "canned_food", "water_bottle", "water_bottle",
         "sports_drink", "instant_noodles", "protein_bar", "granola_bar",
-        "candle", "matches", "flashlight", "plastic_bag"
+        "candle", "matches", "flashlight", "plastic_bag", "glow_stick",
+        "caffeine_pills", "energy_drink"
     ];
 
     private static readonly string[] _respawnForest =
     [
         "wild_berries", "wild_berries", "mushrooms", "mushrooms",
-        "wild_berries", "mushrooms", "wild_berries"
+        "wild_berries", "mushrooms", "wild_berries", "sleeping_bag"
     ];
 
     private static readonly string[] _respawnRiver =
@@ -151,12 +153,26 @@ public class ItemSystem : IItemSystem
         PlaceItem("hand_sanitizer",   22, 24);
         PlaceItem("candle",           23, 24);
         PlaceItem("matches",          21, 24);
+        PlaceItem("caffeine_pills",   22, 24);  // Hargrove medicine cabinet
         PlaceItem("pocket_knife",     23, 21);
         PlaceItem("rope",             21, 21);
         PlaceItem("batteries",        24, 22);
         PlaceItem("stuffed_animal",   24, 23);
         PlaceItem("photo_album",      23, 20);
         PlaceItem("duffel_bag",       22, 20);
+
+        // ── Sleeping bags — one per apartment block, found in bedroom closets ─────
+        PlaceItem("sleeping_bag",     15, 12);  // The Meridian — storage closet
+        PlaceItem("sleeping_bag",     14,  3);  // Rosewood — spare bedroom
+        PlaceItem("sleeping_bag",      3, 14);  // Calloway — hallway cupboard
+        PlaceItem("sleeping_bag",     24, 20);  // Hargrove — top-floor unit
+        PlaceItem("sleeping_bag",     34, 11);  // Eastside Flats — camping gear left by tenants
+
+        // ── Oil lamps — one per apartment block, found on shelves ───────────────
+        PlaceItem("oil_lamp",         11, 11);  // The Meridian living room shelf
+        PlaceItem("oil_lamp",         11,  5);  // Rosewood hallway
+        PlaceItem("oil_lamp",          3, 15);  // Calloway kitchen counter
+        PlaceItem("oil_lamp",         24, 24);  // Hargrove dining room
 
         // ── Liquid containers — scattered across apartment blocks ─────────────
         // The Meridian
@@ -195,6 +211,7 @@ public class ItemSystem : IItemSystem
         PlaceItem("protein_bar",       24,  6);
         PlaceItem("honey_jar",         23,  6);
         PlaceItem("crackers",          20,  6);
+        PlaceItem("caffeine_pills",    25,  6);  // Pak's counter display
 
         // Neon Diner Kitchen (19-26, 15-17) — commercial kitchen scraps
         PlaceItem("matches",           21, 16);
@@ -216,6 +233,7 @@ public class ItemSystem : IItemSystem
         PlaceItem("antiseptic",        12, 25);
         PlaceItem("bandage_roll",      15, 24);
         PlaceItem("first_aid_kit",     13, 26);
+        PlaceItem("caffeine_pills",    14, 26);  // OTC shelf
 
         // Hendricks Loading Dock (1-4, 23-26) — heavy equipment and tool crates
         PlaceItem("crowbar",           2, 24);
@@ -233,6 +251,8 @@ public class ItemSystem : IItemSystem
         PlaceItem("camping_stove",     1, 24);  // emergency kit in warehouse break room
         PlaceItem("cargo_straps",      4, 23);
         PlaceItem("cargo_straps",      3, 24);
+        PlaceItem("glow_stick",        1, 26);  // safety kit by the loading bay
+        PlaceItem("oil_lamp",          2, 23);  // break room shelf
 
         // Hendricks Cold Storage (5-8, 23-26) — frozen food and water reserves
         PlaceItem("canned_food",         6, 24);
@@ -275,6 +295,7 @@ public class ItemSystem : IItemSystem
         PlaceItem("blanket",            32,  7);
         PlaceItem("flashlight",         29,  6);
         PlaceItem("batteries",          34,  5);
+        PlaceItem("caffeine_pills",     30,  6);  // nurse station drawer
         PlaceItem("water_jug",          33,  3);  // IV bags long dry
         PlaceItem("bucket",             34,  3);
         // Hospital-exclusive high-tier medical items
@@ -283,6 +304,9 @@ public class ItemSystem : IItemSystem
         PlaceItem("morphine",           34,  6);  // crash cart
         PlaceItem("surgical_kit",       29,  7);
         PlaceItem("surgical_kit",       33,  7);
+        // Emergency lighting in hospital corridors
+        PlaceItem("glow_stick",         30,  7);
+        PlaceItem("glow_stick",         34,  4);  // nurse station emergency kit
 
         // ── Eastside Flats (28-35, 10-17) ─────────────────────────────────────
         PlaceItem("canned_food",       31, 13);
@@ -320,6 +344,7 @@ public class ItemSystem : IItemSystem
         PlaceItem("wood_axe",           6, 29);   // woodsman's axe at the forest edge
         PlaceItem("foraging_knife",     3, 33);   // left by a hunter
         PlaceItem("fire_steel",         5, 35);   // emergency kit — fire starting
+        PlaceItem("sleeping_bag",       6, 33);   // abandoned campsite
 
         // ── Birchwood Forest (10-17, 28-35) ──────────────────────────────────
         PlaceItem("wild_berries",      12, 30);
@@ -332,6 +357,7 @@ public class ItemSystem : IItemSystem
         PlaceItem("water_jug",         13, 33);   // left by a hiker
         PlaceItem("foraging_knife",    15, 31);   // lost by a hiker
         PlaceItem("fire_steel",        11, 35);
+        PlaceItem("sleeping_bag",      14, 34);   // hiker's camp — still rolled up
 
         // ── River areas (Irongate River, River Bend, The Delta) ───────────────
         // Empty containers left at the water's edge
@@ -387,7 +413,7 @@ public class ItemSystem : IItemSystem
             "protein_bar", "crackers", "canned_meat", "chocolate_bar",
             "prescription_meds", "painkillers", "flashlight", "candle",
             "matches", "instant_coffee", "honey_jar", "batteries",
-            "cigarettes", "fire_steel"
+            "cigarettes", "fire_steel", "caffeine_pills", "energy_drink"
         };
         var apartmentItems = new[]
         {
@@ -399,13 +425,14 @@ public class ItemSystem : IItemSystem
             "photo_album", "winter_coat", "batteries", "rope",
             "hand_sanitizer", "glass_bottle", "stuffed_animal", "hammer",
             "tin_can", "mason_jar", "cooking_pot", "water_jug", "bucket",
-            "cigarettes", "jewelry", "cash", "fire_steel"
+            "cigarettes", "jewelry", "cash", "fire_steel",
+            "oil_lamp", "cooking_oil", "sleeping_bag"
         };
         var forestItems = new[]
         {
             "wild_berries", "wild_berries", "mushrooms", "mushrooms",
             "wild_berries", "mushrooms", "rope", "pocket_knife", "blanket",
-            "foraging_knife", "fire_steel"
+            "foraging_knife", "fire_steel", "sleeping_bag"
         };
 
         int placed = 0, attempts = 0;
@@ -457,10 +484,10 @@ public class ItemSystem : IItemSystem
     public IReadOnlyList<ItemInstance> GetInventory(string agentName) =>
         _agentInventories.TryGetValue(agentName, out var inv) ? inv : [];
 
-    public bool TryPickUp(string agentName, string instanceIdStr)
+    public string? TryPickUp(string agentName, string instanceIdStr)
     {
         var pos = _world.GetAgentPosition(agentName);
-        if (pos.x < 0) return false;
+        if (pos.x < 0) return null;
 
         // Check placed traps first — agents can retrieve them before they fire
         if (_placedTraps.TryGetValue(pos, out var trapList))
@@ -468,26 +495,26 @@ public class ItemSystem : IItemSystem
             var trap = trapList.FirstOrDefault(i => i.InstanceId.ToString() == instanceIdStr);
             if (trap != null)
             {
-                if (IsInventoryFull(agentName)) return false;
+                if (IsInventoryFull(agentName)) return null;
                 trapList.Remove(trap);
                 _agentInventories[agentName].Add(trap);
                 _world.LogAt(pos.x, pos.y, $"{agentName} retrieves the armed trap.");
                 if (_world.Mood.Has(agentName))
                     _world.Mood.GetMood(agentName).AdjustMood(+2f);
                 _world.Memory.AddMemory(agentName, $"Retrieved an armed trap from ({pos.x},{pos.y}).");
-                return true;
+                return trap.DisplayName;
             }
         }
 
-        if (!_cellItems.TryGetValue(pos, out var cellList)) return false;
+        if (!_cellItems.TryGetValue(pos, out var cellList)) return null;
 
         var item = cellList.FirstOrDefault(i => i.InstanceId.ToString() == instanceIdStr);
-        if (item is null) return false;
+        if (item is null) return null;
 
         if (IsInventoryFull(agentName))
         {
             _world.LogDev($"[{agentName}] pick_up blocked — inventory full ({GetCarryCapacity(agentName)} slots)");
-            return false;
+            return null;
         }
 
         cellList.Remove(item);
@@ -532,16 +559,16 @@ public class ItemSystem : IItemSystem
             _droppedBy.Remove(item.InstanceId);
         }
 
-        return true;
+        return item.DisplayName;
     }
 
-    public bool TryDrop(string agentName, string instanceIdStr)
+    public string? TryDrop(string agentName, string instanceIdStr)
     {
         var pos = _world.GetAgentPosition(agentName);
-        if (pos.x < 0) return false;
+        if (pos.x < 0) return null;
         var inv = _agentInventories[agentName];
         var item = inv.FirstOrDefault(i => i.InstanceId.ToString() == instanceIdStr);
-        if (item is null) return false;
+        if (item is null) return null;
 
         inv.Remove(item);
         if (!_cellItems.TryGetValue(pos, out var cellList))
@@ -552,7 +579,7 @@ public class ItemSystem : IItemSystem
         cellList.Add(item);
         _droppedBy[item.InstanceId] = agentName; // track ownership for theft detection
         _world.LogAt(pos.x, pos.y, $"{agentName} drops {item.DisplayName}.");
-        return true;
+        return item.DisplayName;
     }
 
     public string TryUse(string agentName, string instanceIdStr)
@@ -633,17 +660,17 @@ public class ItemSystem : IItemSystem
         return effect;
     }
 
-    public bool TryGive(string fromAgent, string instanceIdStr, string toAgent)
+    public string? TryGive(string fromAgent, string instanceIdStr, string toAgent)
     {
         var fromPos = _world.GetAgentPosition(fromAgent);
         var toPos   = _world.GetAgentPosition(toAgent);
-        if (fromPos.x < 0 || toPos.x < 0) return false;
+        if (fromPos.x < 0 || toPos.x < 0) return null;
         // Must be within the same earshot as conversations (visible to each other).
-        if (!_world.GetVisibleAgents(fromAgent).Any(a => a.name == toAgent)) return false;
+        if (!_world.GetVisibleAgents(fromAgent).Any(a => a.name == toAgent)) return null;
 
         var fromInv = _agentInventories[fromAgent];
         var item = fromInv.FirstOrDefault(i => i.InstanceId.ToString() == instanceIdStr);
-        if (item is null) return false;
+        if (item is null) return null;
 
         fromInv.Remove(item);
         _agentInventories[toAgent].Add(item);
@@ -691,7 +718,7 @@ public class ItemSystem : IItemSystem
         _world.LogDev($"[{fromAgent}] give {item.DisplayName} → trust[{toAgent}] +5{(silverTongue ? "  [silver tongue]" : "")}");
         _world.Memory.AddMemory(fromAgent, $"Gave {item.DisplayName} to {toAgent}.");
         _world.Memory.AddMemory(toAgent, $"Received {item.DisplayName} from {fromAgent}.");
-        return true;
+        return item.DisplayName;
     }
 
     public (bool consumed, bool success, IReadOnlyList<string> yielded) TryDeconstruct(string agentName, string instanceIdStr)

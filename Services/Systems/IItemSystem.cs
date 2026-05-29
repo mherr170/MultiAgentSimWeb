@@ -13,10 +13,10 @@ public interface IItemSystem
     IReadOnlyList<ItemInstance> GetItemsAt(int x, int y);
     IReadOnlyList<ItemInstance> GetInventory(string agentName);
 
-    bool TryPickUp(string agentName, string instanceIdStr);
-    bool TryDrop(string agentName, string instanceIdStr);
+    string? TryPickUp(string agentName, string instanceIdStr);
+    string? TryDrop(string agentName, string instanceIdStr);
     string TryUse(string agentName, string instanceIdStr);
-    bool TryGive(string fromAgent, string instanceIdStr, string toAgent);
+    string? TryGive(string fromAgent, string instanceIdStr, string toAgent);
 
     /// Returns (consumed, success, yields).
     (bool consumed, bool success, IReadOnlyList<string> yielded) TryDeconstruct(string agentName, string instanceIdStr);

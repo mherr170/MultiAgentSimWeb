@@ -1,0 +1,33 @@
+<div class="broadcast-feed">
+    @foreach (var evt in Events)
+    {
+        @if (evt.Type == SimEventTypes.Round)
+        {
+            <div class="bfeed-round">Hour @evt.Content</div>
+        }
+        else
+        {
+            var cc = ColorResolver(evt.AgentColor);
+            <div class="bfeed-event @evt.Type">
+                @if (!string.IsNullOrEmpty(evt.AgentName))
+                {
+                    <PixelPortrait AgentName="@evt.AgentName" AgentColor="@cc" PixelSize="2" />
+                    <span class="bfeed-name" style="color: @cc">@evt.AgentName</span>
+                }
+                @if (!string.IsNullOrEmpty(evt.Label))
+                {
+                    <span class="bfeed-label">@evt.Label</span>
+                }
+                @if (!string.IsNullOrEmpty(evt.Content))
+                {
+                    <span class="bfeed-content">@evt.Content</span>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<SimEvent> Events        { get; set; } = [];
+    [Parameter] public Func<string, string>    ColorResolver { get; set; } = _ => "#52525b";
+}

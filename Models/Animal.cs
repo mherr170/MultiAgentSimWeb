@@ -51,4 +51,8 @@ public class Animal
 
     public int     RoundsInCurrentState { get; set; }
     public string? TargetAgentName      { get; set; }
+
+    // Set when a small animal has been fed — it follows the named agent for this many rounds.
+    public string? CompanionOf         { get; set; }
+    public int     CompanionRoundsLeft { get; set; }
 }

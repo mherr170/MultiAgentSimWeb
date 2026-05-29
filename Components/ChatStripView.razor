@@ -1,0 +1,34 @@
+@inject IJSRuntime JS
+
+@if (Events.Count > 0)
+{
+    <div class="chat-strip" @ref="_strip">
+        @foreach (var ce in Events)
+        {
+            var cc = ColorResolver(ce.AgentColor);
+            <div class="chat-msg @(ce.Type == SimEventTypes.DirectResponse ? "chat-msg-reply" : "")"
+                 style="--cm-color: @cc">
+                <div class="chat-msg-header">
+                    <PixelPortrait AgentName="@ce.AgentName" AgentColor="@cc" PixelSize="2" />
+                    <span class="chat-msg-name" style="color: @cc">@ce.AgentName</span>
+                    @if (ce.Type == SimEventTypes.DirectResponse)
+                    { <span class="chat-msg-tag">↩ replies</span> }
+                </div>
+                <div class="chat-msg-text">@ce.Content</div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<SimEvent> Events   { get; set; } = [];
+    [Parameter] public Func<string, string>    ColorResolver { get; set; } = _ => "#52525b";
+
+    private ElementReference _strip;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Events.Count > 0)
+            try { await JS.InvokeVoidAsync("scrollToRight", _strip); } catch { }
+    }
+}

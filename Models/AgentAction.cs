@@ -97,4 +97,18 @@ public class AgentAction
     // Cast your vote on the active group vote — "yes" or "no" (or a custom option shown in context).
     [JsonPropertyName("group_vote")]
     public string GroupVote { get; set; } = "";
+
+    /// True when the agent did something meaningful this turn (used to reset the idle/boredom counter).
+    [JsonIgnore]
+    public bool IsActive =>
+        !string.IsNullOrWhiteSpace(MoveTo)
+        || !string.IsNullOrEmpty(MoveFloor)
+        || Scavenge
+        || DrinkTap || DrinkFountain || DrinkRiver
+        || Fish
+        || !string.IsNullOrWhiteSpace(Cook)
+        || !string.IsNullOrWhiteSpace(Speech)
+        || (ItemAction != "none" && !string.IsNullOrWhiteSpace(ItemAction))
+        || (AnimalAction != "none" && !string.IsNullOrWhiteSpace(AnimalAction))
+        || !string.IsNullOrWhiteSpace(CraftRecipeId);
 }

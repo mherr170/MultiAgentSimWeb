@@ -1,0 +1,55 @@
+<div class="agent-card @(Agent.IsDead ? "agent-card-dead" : "") @(Agent.IsCurrent ? "agent-card-thinking" : "")"
+     style="--agent-color: @Agent.ColorHex"
+     @onclick="() => OnClicked.InvokeAsync(Agent.Name)">
+
+    <div class="agent-card-head">
+        <PixelPortrait AgentName="@Agent.Name" AgentColor="@Agent.ColorHex" PixelSize="4" />
+        <div class="agent-card-info">
+            <div class="agent-card-name" style="color: @Agent.ColorHex">@Agent.Name</div>
+            <span class="agent-card-badge @BadgeClass">
+                @if (Agent.IsCurrent) { <span class="thinking-dot"></span> }
+                @BadgeText
+            </span>
+        </div>
+    </div>
+
+    @if (!Agent.IsDead)
+    {
+        var hpPct = Agent.MaxHp > 0 ? Agent.Hp / Agent.MaxHp * 100f : 0f;
+
+        <div class="agent-card-bars">
+            <div class="agent-bar">
+                <span class="bar-label">HP</span>
+                <div class="inv-meter-bar">
+                    <div class="inv-meter-fill @HpClass(hpPct)"
+                         style="width: @(hpPct.ToString("F0"))%"></div>
+                </div>
+            </div>
+            <div class="agent-bar">
+                <span class="bar-label">Hunger</span>
+                <div class="inv-meter-bar">
+                    <div class="inv-meter-fill hunger"
+                         style="width: @(Agent.Hunger.ToString("F0"))%"></div>
+                </div>
+            </div>
+            <div class="agent-bar">
+                <span class="bar-label">Thirst</span>
+                <div class="inv-meter-bar">
+                    <div class="inv-meter-fill thirst"
+                         style="width: @(Agent.Thirst.ToString("F0"))%"></div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public RosterAgentViewModel Agent     { get; set; } = null!;
+    [Parameter]                 public EventCallback<string> OnClicked { get; set; }
+
+    private string BadgeText  => Agent.IsDead ? "Dead"    : Agent.IsCurrent ? "Thinking" : "Active";
+    private string BadgeClass => Agent.IsDead ? "badge-dead" : Agent.IsCurrent ? "badge-thinking" : "badge-active";
+
+    private static string HpClass(float pct) =>
+        pct < 30f ? "stress-high" : pct < 60f ? "stress-mid" : "stress-low";
+}
