@@ -591,6 +591,7 @@
         var profiles = ProfileService.Profiles;
         situation = profiles.Situation;
         agentDefs = profiles.Agents
+            .Take(6)
             .Select(a => new AgentDefinition { Name = a.Name, Persona = a.Persona, Profile = a.Profile })
             .ToList();
 
